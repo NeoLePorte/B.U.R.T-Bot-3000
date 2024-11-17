@@ -10,37 +10,49 @@ jobs:
     steps:
       - uses: actions/checkout@v3
       
-      - name: Install SSH Key
-        uses: shimataro/ssh-key-action@v2
-        with:
-          key: ${{ secrets.SSH_PRIVATE_KEY }}
-          known_hosts: unnecessary
-          if_key_exists: replace
-          
-      - name: Adding Known Hosts
+      - name: Debug Setup
         run: |
           mkdir -p ~/.ssh
-          ssh-keyscan -H ${{ secrets.SSH_HOST }} >> ~/.ssh/known_hosts
+          echo "Setting up SSH directory..."
+          ls -la ~/.ssh
       
-      - name: Test SSH Connection
-        run: ssh -T ${{ secrets.SSH_USER }}@${{ secrets.SSH_HOST }} -p ${{ secrets.SSH_PORT }} 'echo "SSH Connection Successful"'
-      
-      - name: Deploy with rsync
+      - name: Install SSH Key
         run: |
-          rsync -avz -e "ssh -p ${{ secrets.SSH_PORT }}" \
+          echo "Installing SSH key..."
+          echo "${{ secrets.SSH_PRIVATE_KEY }}" > ~/.ssh/deploy_key
+          chmod 600 ~/.ssh/deploy_key
+          echo "Key installed. Checking..."
+          ls -la ~/.ssh/deploy_key
+          
+      - name: Add Known Hosts
+        run: |
+          echo "Adding known hosts..."
+          ssh-keyscan -H ${{ secrets.SSH_HOST }} >> ~/.ssh/known_hosts
+          chmod 644 ~/.ssh/known_hosts
+          echo "Known hosts file:"
+          cat ~/.ssh/known_hosts
+          
+      - name: Test SSH Connection (Verbose)
+        run: |
+          echo "Testing SSH connection with verbose output..."
+          ssh -v -i ~/.ssh/deploy_key -o StrictHostKeyChecking=no ${{ secrets.SSH_USER }}@${{ secrets.SSH_HOST }} 'echo "Connection test"'
+      
+      - name: Deploy Files
+        if: success()
+        run: |
+          echo "Deploying files..."
+          rsync -avz -e "ssh -i ~/.ssh/deploy_key -o StrictHostKeyChecking=no" \
             --exclude '.git*' \
             --exclude 'node_modules' \
             ./ ${{ secrets.SSH_USER }}@${{ secrets.SSH_HOST }}:/root/burt-bot/
             
-      - name: Execute remote SSH commands
-        uses: appleboy/ssh-action@master
-        with:
-          host: ${{ secrets.SSH_HOST }}
-          username: ${{ secrets.SSH_USER }}
-          key: ${{ secrets.SSH_PRIVATE_KEY }}
-          port: ${{ secrets.SSH_PORT }}
-          script: |
-            cd /root/burt-bot
-            npm install
-            pm2 restart burt-bot || pm2 start index.js --name burt-bot
+      - name: Run Deployment Commands
+        if: success()
+        run: |
+          echo "Running deployment commands..."
+          ssh -i ~/.ssh/deploy_key -o StrictHostKeyChecking=no ${{ secrets.SSH_USER }}@${{ secrets.SSH_HOST }} '
+            cd /root/burt-bot && \
+            npm install && \
+            pm2 restart burt-bot || pm2 start index.js --name burt-bot && \
             pm2 save
+          '
