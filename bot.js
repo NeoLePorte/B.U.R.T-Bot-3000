@@ -113,7 +113,7 @@ client.on('interactionCreate', async interaction => {
         .setURL(galleryData.images[0].messageLink)
         .setTimestamp(galleryData.images[0].timestamp);
 
-      // Create navigation buttons
+      // Create navigation buttons change test
       const row = new ActionRowBuilder()
         .addComponents(
           new ButtonBuilder()
