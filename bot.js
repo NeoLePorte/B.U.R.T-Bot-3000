@@ -292,7 +292,7 @@ client.on('interactionCreate', async interaction => {
       console.time('initialTweetFetch');
       
       const MAX_TWEETS = 50;
-      const INITIAL_FETCH = 20; // Show first 20 messages quickly
+      const INITIAL_FETCH = 50; // Increased initial fetch
       let tweets = [];
       let lastId = null;
       let isLoading = true;
@@ -303,37 +303,32 @@ client.on('interactionCreate', async interaction => {
 
       // Process messages function
       const processMessages = (messages) => {
+        console.log(`Processing ${messages.size} messages`); // Debug log
         const newTweets = [];
         for (const msg of messages.values()) {
           const tweetMatches = msg.content.match(tweetRegex);
           if (!tweetMatches) continue;
 
+          console.log(`Found tweet matches in message: ${tweetMatches.length}`); // Debug log
+
           // Look for tweet images in embeds or content
           let tweetImage = null;
-          
-          // Check all possible embed image sources
           if (msg.embeds.length > 0) {
-            for (const embed of msg.embeds) {
-              if (embed.image) {
-                tweetImage = embed.image.url;
-                break;
-              }
-              if (embed.thumbnail) {
-                tweetImage = embed.thumbnail.url;
-                break;
-              }
+            console.log(`Message has ${msg.embeds.length} embeds`); // Debug log
+            const imageEmbed = msg.embeds.find(embed => embed.image || embed.thumbnail);
+            if (imageEmbed?.image) {
+              tweetImage = imageEmbed.image.url;
+            } else if (imageEmbed?.thumbnail) {
+              tweetImage = imageEmbed.thumbnail.url;
             }
           }
           
-          // Backup: check for direct image links
           if (!tweetImage) {
             const imageMatches = msg.content.match(imageRegex);
             if (imageMatches) {
               tweetImage = imageMatches[0];
             }
           }
-
-          console.log(`Found tweet with image: ${tweetImage ? 'yes' : 'no'}`); // Debug log
 
           for (const url of tweetMatches) {
             newTweets.push({
@@ -342,22 +337,30 @@ client.on('interactionCreate', async interaction => {
               timestamp: msg.createdTimestamp,
               messageLink: msg.url,
               content: msg.content,
-              image: tweetImage,
-              embeds: msg.embeds // Store all embeds for debugging
+              image: tweetImage
             });
           }
         }
+        console.log(`Processed ${newTweets.length} new tweets`); // Debug log
         return newTweets;
       };
 
-      // Initial quick fetch
+      // Initial fetch
+      console.log('Starting initial fetch...'); // Debug log
       const initialMessages = await interaction.channel.messages.fetch({ limit: INITIAL_FETCH });
+      console.log(`Fetched ${initialMessages.size} initial messages`); // Debug log
+      
       tweets = processMessages(initialMessages);
-      lastId = initialMessages.last()?.id;
+      console.log(`Initial tweets found: ${tweets.length}`); // Debug log
+      
+      if (initialMessages.size > 0) {
+        lastId = initialMessages.last().id;
+      }
 
       console.timeEnd('initialTweetFetch');
       
       if (tweets.length === 0) {
+        console.log('No tweets found in initial fetch'); // Debug log
         await interaction.editReply('No X/Twitter links found in the recent messages!');
         return;
       }
@@ -381,6 +384,7 @@ client.on('interactionCreate', async interaction => {
         return embed;
       };
 
+      // Create gallery data
       const galleryData = {
         tweets,
         currentIndex: 0,
@@ -424,52 +428,50 @@ client.on('interactionCreate', async interaction => {
       activeGalleries.set(interaction.channelId, galleryData);
 
       // Background loading
-      (async () => {
-        try {
-          while (tweets.length < MAX_TWEETS && lastId) {
-            const messages = await interaction.channel.messages.fetch({ 
-              limit: 100,
-              before: lastId 
-            });
-            
-            if (messages.size === 0) break;
-            
-            const newTweets = processMessages(messages);
-            if (newTweets.length === 0) break;
-            
-            tweets.push(...newTweets);
-            if (tweets.length > MAX_TWEETS) {
-              tweets = tweets.slice(0, MAX_TWEETS);
-              break;
-            }
-            
-            lastId = messages.last()?.id;
-            
-            // Update gallery data
-            galleryData.tweets = tweets;
-            
-            // Update the current view if still on first page
-            if (galleryData.currentIndex === 0) {
+      if (tweets.length < MAX_TWEETS && lastId) {
+        (async () => {
+          try {
+            while (tweets.length < MAX_TWEETS && lastId) {
+              console.log('Fetching more tweets...'); // Debug log
+              const messages = await interaction.channel.messages.fetch({ 
+                limit: 100,
+                before: lastId 
+              });
+              
+              if (messages.size === 0) break;
+              
+              const newTweets = processMessages(messages);
+              if (newTweets.length === 0) break;
+              
+              tweets.push(...newTweets);
+              if (tweets.length > MAX_TWEETS) {
+                tweets = tweets.slice(0, MAX_TWEETS);
+                break;
+              }
+              
+              lastId = messages.last().id;
+              galleryData.tweets = tweets;
+              
+              // Update the current view
               await interaction.editReply({
-                embeds: [createEmbed(tweets[0], 0, tweets.length)],
-                components: [createRow(0, tweets.length)]
+                embeds: [createEmbed(tweets[galleryData.currentIndex], galleryData.currentIndex, tweets.length)],
+                components: [createRow(galleryData.currentIndex, tweets.length)]
               });
             }
-          }
-          
-          isLoading = false;
-          
-          // Final update
-          if (galleryData.currentIndex === 0) {
+            
+            isLoading = false;
+            console.log(`Final tweet count: ${tweets.length}`); // Debug log
+            
+            // Final update
             await interaction.editReply({
               embeds: [createEmbed(tweets[galleryData.currentIndex], galleryData.currentIndex, tweets.length)],
               components: [createRow(galleryData.currentIndex, tweets.length)]
             });
+          } catch (error) {
+            console.error('Error in background loading:', error);
           }
-        } catch (error) {
-          console.error('Error in background loading:', error);
-        }
-      })();
+        })();
+      }
 
     } catch (error) {
       console.error('Error creating tweet gallery:', error);
