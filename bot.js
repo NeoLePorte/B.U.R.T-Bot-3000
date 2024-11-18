@@ -69,12 +69,16 @@ client.on('interactionCreate', async interaction => {
         .filter(msg => msg.attachments.some(attachment => {
           // Check for common image extensions if contentType is not available
           const url = attachment.url.toLowerCase();
+          // Remove query parameters for extension checking
+          const cleanUrl = url.split('?')[0];
+          
           const isImage = attachment.contentType?.startsWith('image/') || 
-                 url.endsWith('.jpg') || 
-                 url.endsWith('.jpeg') || 
-                 url.endsWith('.png') || 
-                 url.endsWith('.gif') ||
-                 url.endsWith('.webp');
+                 cleanUrl.endsWith('.jpg') || 
+                 cleanUrl.endsWith('.jpeg') || 
+                 cleanUrl.endsWith('.png') || 
+                 cleanUrl.endsWith('.gif') ||
+                 cleanUrl.endsWith('.webp');
+          console.log(`Checking attachment: ${url} - isImage: ${isImage}`); // Debug log
           return isImage;
         }));
       
