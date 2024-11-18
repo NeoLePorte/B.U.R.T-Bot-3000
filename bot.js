@@ -292,47 +292,65 @@ client.on('interactionCreate', async interaction => {
       console.time('initialTweetFetch');
       
       const MAX_TWEETS = 50;
-      const INITIAL_FETCH = 50; // Increased initial fetch
+      const INITIAL_FETCH = 50;
       let tweets = [];
       let lastId = null;
       let isLoading = true;
 
-      // Regular expressions
-      const tweetRegex = /(?:https?:\/\/)?(?:www\.)?(twitter\.com|x\.com)\/[a-zA-Z0-9_]+\/status\/[0-9]+/g;
+      // Updated regex patterns
+      const tweetRegex = /https?:\/\/(?:www\.)?(twitter\.com|x\.com)\/\w+\/status\/\d+/gi;
       const imageRegex = /https:\/\/pbs\.twimg\.com\/media\/[^\s]+/g;
 
       // Process messages function
       const processMessages = (messages) => {
-        console.log(`Processing ${messages.size} messages`); // Debug log
+        console.log(`Processing ${messages.size} messages`);
         const newTweets = [];
+        
         for (const msg of messages.values()) {
-          const tweetMatches = msg.content.match(tweetRegex);
-          if (!tweetMatches) continue;
+          // Log the full message content for debugging
+          console.log('Message content:', msg.content);
+          
+          // Test regex directly
+          const tweetMatches = Array.from(msg.content.matchAll(tweetRegex));
+          console.log('Tweet matches:', tweetMatches.length > 0 ? tweetMatches.map(m => m[0]) : 'none');
+          
+          if (tweetMatches.length === 0) continue;
 
-          console.log(`Found tweet matches in message: ${tweetMatches.length}`); // Debug log
+          console.log(`Found tweet matches in message: ${tweetMatches.length}`);
 
-          // Look for tweet images in embeds or content
+          // Look for tweet images in embeds
           let tweetImage = null;
           if (msg.embeds.length > 0) {
-            console.log(`Message has ${msg.embeds.length} embeds`); // Debug log
-            const imageEmbed = msg.embeds.find(embed => embed.image || embed.thumbnail);
-            if (imageEmbed?.image) {
-              tweetImage = imageEmbed.image.url;
-            } else if (imageEmbed?.thumbnail) {
-              tweetImage = imageEmbed.thumbnail.url;
+            console.log('Embeds found:', msg.embeds.length);
+            for (const embed of msg.embeds) {
+              console.log('Embed type:', embed.type);
+              if (embed.image) {
+                console.log('Found image URL:', embed.image.url);
+                tweetImage = embed.image.url;
+                break;
+              }
+              if (embed.thumbnail) {
+                console.log('Found thumbnail URL:', embed.thumbnail.url);
+                tweetImage = embed.thumbnail.url;
+                break;
+              }
             }
           }
           
+          // Check for direct image links
           if (!tweetImage) {
             const imageMatches = msg.content.match(imageRegex);
             if (imageMatches) {
+              console.log('Found direct image URL:', imageMatches[0]);
               tweetImage = imageMatches[0];
             }
           }
 
-          for (const url of tweetMatches) {
+          for (const match of tweetMatches) {
+            const tweetUrl = match[0];
+            console.log('Adding tweet:', tweetUrl);
             newTweets.push({
-              url: url,
+              url: tweetUrl,
               author: msg.author.username,
               timestamp: msg.createdTimestamp,
               messageLink: msg.url,
@@ -341,17 +359,26 @@ client.on('interactionCreate', async interaction => {
             });
           }
         }
-        console.log(`Processed ${newTweets.length} new tweets`); // Debug log
+        
+        console.log(`Processed ${newTweets.length} new tweets`);
         return newTweets;
       };
 
       // Initial fetch
-      console.log('Starting initial fetch...'); // Debug log
+      console.log('Starting initial fetch...');
       const initialMessages = await interaction.channel.messages.fetch({ limit: INITIAL_FETCH });
-      console.log(`Fetched ${initialMessages.size} initial messages`); // Debug log
+      console.log(`Fetched ${initialMessages.size} initial messages`);
+      
+      // Log a few sample messages to verify content
+      console.log('Sample messages:');
+      Array.from(initialMessages.values()).slice(0, 3).forEach(msg => {
+        console.log('---');
+        console.log('Content:', msg.content);
+        console.log('Embeds:', msg.embeds.length);
+      });
       
       tweets = processMessages(initialMessages);
-      console.log(`Initial tweets found: ${tweets.length}`); // Debug log
+      console.log(`Initial tweets found: ${tweets.length}`);
       
       if (initialMessages.size > 0) {
         lastId = initialMessages.last().id;
@@ -360,7 +387,7 @@ client.on('interactionCreate', async interaction => {
       console.timeEnd('initialTweetFetch');
       
       if (tweets.length === 0) {
-        console.log('No tweets found in initial fetch'); // Debug log
+        console.log('No tweets found in initial fetch');
         await interaction.editReply('No X/Twitter links found in the recent messages!');
         return;
       }
@@ -432,7 +459,7 @@ client.on('interactionCreate', async interaction => {
         (async () => {
           try {
             while (tweets.length < MAX_TWEETS && lastId) {
-              console.log('Fetching more tweets...'); // Debug log
+              console.log('Fetching more tweets...');
               const messages = await interaction.channel.messages.fetch({ 
                 limit: 100,
                 before: lastId 
@@ -460,7 +487,7 @@ client.on('interactionCreate', async interaction => {
             }
             
             isLoading = false;
-            console.log(`Final tweet count: ${tweets.length}`); // Debug log
+            console.log(`Final tweet count: ${tweets.length}`);
             
             // Final update
             await interaction.editReply({
