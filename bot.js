@@ -31,6 +31,18 @@ const commands = [
         required: false
       }
     ]
+  },
+  {
+    name: 'tweets',
+    description: 'Show recent X/Twitter links in the channel',
+    options: [
+      {
+        name: 'amount',
+        description: 'Number of messages to check (default: 100, max: 100)',
+        type: 4, // INTEGER
+        required: false
+      }
+    ]
   }
 ];
 
@@ -268,6 +280,123 @@ client.on('interactionCreate', async interaction => {
     } catch (error) {
       console.error('Error creating image gallery:', error);
       await interaction.editReply('An error occurred while creating the image gallery.')
+        .catch(() => console.error('Failed to send error message'));
+    }
+  } else if (commandName === 'tweets') {
+    try {
+      await interaction.deferReply({ ephemeral: true });
+      console.time('tweetFetch');
+      
+      const MAX_TWEETS = 50;
+      const FETCH_TIMEOUT = 15000; // 15 seconds
+      let tweets = [];
+      let lastId = null;
+
+      // Regular expressions for X/Twitter URLs
+      const tweetRegex = /(?:https?:\/\/)?(?:www\.)?(twitter\.com|x\.com)\/[a-zA-Z0-9_]+\/status\/[0-9]+/g;
+
+      // Tweet fetching function
+      const fetchTweets = async () => {
+        while (tweets.length < MAX_TWEETS) {
+          const messages = await interaction.channel.messages.fetch({ 
+            limit: 100,
+            before: lastId 
+          });
+          
+          if (messages.size === 0) break;
+          lastId = messages.last().id;
+
+          // Process messages for tweets
+          for (const msg of messages.values()) {
+            const matches = msg.content.match(tweetRegex);
+            if (!matches) continue;
+
+            for (const url of matches) {
+              tweets.push({
+                url: url,
+                author: msg.author.username,
+                timestamp: msg.createdTimestamp,
+                messageLink: msg.url,
+                content: msg.content
+              });
+              if (tweets.length >= MAX_TWEETS) return;
+            }
+          }
+        }
+      };
+
+      // Create a promise that resolves after timeout
+      const timeoutPromise = new Promise((resolve) => {
+        setTimeout(() => resolve('timeout'), FETCH_TIMEOUT);
+      });
+
+      // Race between fetch and timeout
+      await Promise.race([fetchTweets(), timeoutPromise]);
+      console.timeEnd('tweetFetch');
+      
+      if (tweets.length === 0) {
+        await interaction.editReply('No X/Twitter links found in the recent messages!');
+        return;
+      }
+
+      console.log(`Found ${tweets.length} tweets`);
+
+      // Create embed pages for tweets
+      const embeds = tweets.map((tweet, index) => {
+        return new EmbedBuilder()
+          .setTitle(`Tweet Links (${index + 1}/${tweets.length})`)
+          .setDescription(`[View Tweet](${tweet.url})\n\nContext: ${tweet.content.substring(0, 200)}${tweet.content.length > 200 ? '...' : ''}`)
+          .setFooter({ 
+            text: `Posted by ${tweet.author} • Click title to view original message`
+          })
+          .setURL(tweet.messageLink)
+          .setTimestamp(tweet.timestamp)
+          .setColor('#1DA1F2'); // Twitter blue color
+      });
+
+      // Create gallery data
+      const galleryData = {
+        embeds,
+        currentIndex: 0,
+        timeoutId: setTimeout(() => {
+          activeGalleries.delete(interaction.channelId);
+          interaction.editReply({
+            content: 'Gallery closed due to inactivity.',
+            embeds: [],
+            components: []
+          }).catch(console.error);
+        }, GALLERY_TIMEOUT)
+      };
+
+      // Create navigation row
+      const row = new ActionRowBuilder()
+        .addComponents(
+          new ButtonBuilder()
+            .setCustomId('prev')
+            .setLabel('Previous')
+            .setStyle(ButtonStyle.Primary)
+            .setDisabled(true),
+          new ButtonBuilder()
+            .setCustomId('next')
+            .setLabel('Next')
+            .setStyle(ButtonStyle.Primary)
+            .setDisabled(tweets.length === 1),
+          new ButtonBuilder()
+            .setCustomId('close')
+            .setLabel('Close Gallery')
+            .setStyle(ButtonStyle.Danger)
+        );
+
+      // Store gallery data and send response
+      activeGalleries.set(interaction.channelId, galleryData);
+      await interaction.editReply({
+        embeds: [embeds[0]],
+        components: [row]
+      });
+
+    } catch (error) {
+      console.error('Error creating tweet gallery:', error);
+      await interaction.editReply('An error occurred while creating the tweet gallery.')
         .catch(() => console.error('Failed to send error message'));
     }
   }
