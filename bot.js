@@ -55,30 +55,42 @@ client.on('interactionCreate', async interaction => {
 
   if (commandName === 'images') {
     const amount = Math.min(options.getInteger('amount') || 100, 100);
-    console.log(`Attempting to fetch ${amount} messages`);
+    console.log(`User requested ${amount} messages`);
 
     try {
       await interaction.deferReply({ ephemeral: true });
 
+      // Add more detailed logging
+      console.log('Attempting to fetch messages...');
+      const messages = await interaction.channel.messages.fetch({ 
+        limit: amount,
+        cache: false  // Make sure we're not just getting cached messages
+      });
+      console.log(`Successfully fetched ${messages.size} messages`);
+      console.log(`First message timestamp: ${messages.first()?.createdAt}`);
+      console.log(`Last message timestamp: ${messages.last()?.createdAt}`);
+
       // Add logging to verify message fetch
-      const messages = await interaction.channel.messages.fetch({ limit: amount });
       console.log(`Fetched ${messages.size} messages`);
       
       // Add logging for images found
       const imageMessages = Array.from(messages.values())
         .filter(msg => msg.attachments.some(attachment => {
-          // Check for common image extensions if contentType is not available
           const url = attachment.url.toLowerCase();
-          // Remove query parameters for extension checking
           const cleanUrl = url.split('?')[0];
-          
           const isImage = attachment.contentType?.startsWith('image/') || 
                  cleanUrl.endsWith('.jpg') || 
                  cleanUrl.endsWith('.jpeg') || 
                  cleanUrl.endsWith('.png') || 
                  cleanUrl.endsWith('.gif') ||
                  cleanUrl.endsWith('.webp');
-          console.log(`Checking attachment: ${url} - isImage: ${isImage}`); // Debug log
+          
+          // Debug logging
+          if (msg.attachments.size > 0) {
+            console.log(`Message ${msg.id} has ${msg.attachments.size} attachments`);
+            console.log(`URL: ${url} - Is Image: ${isImage}`);
+          }
+          
           return isImage;
         }));
       
@@ -95,7 +107,16 @@ client.on('interactionCreate', async interaction => {
           .reverse() // Reverse to show oldest first
           .flatMap(msg => 
             Array.from(msg.attachments.values())
-              .filter(attachment => attachment.contentType?.startsWith('image/'))
+              .filter(attachment => {
+                const url = attachment.url.toLowerCase();
+                const cleanUrl = url.split('?')[0];
+                return attachment.contentType?.startsWith('image/') || 
+                       cleanUrl.endsWith('.jpg') || 
+                       cleanUrl.endsWith('.jpeg') || 
+                       cleanUrl.endsWith('.png') || 
+                       cleanUrl.endsWith('.gif') ||
+                       cleanUrl.endsWith('.webp');
+              })
               .map(attachment => ({
                 url: attachment.url,
                 author: msg.author.username,
