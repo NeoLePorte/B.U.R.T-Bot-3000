@@ -573,7 +573,7 @@ client.on('interactionCreate', async interaction => {
         userCooldowns.set(userId, Date.now() + COOLDOWN_DURATION);
         
         try {
-          await interaction.deferReply();
+          await interaction.deferReply({ ephemeral: true });
           const question = interaction.options.getString('question');
 
           console.log(`Processing question from ${interaction.user.username}: ${question}`);
@@ -607,7 +607,10 @@ client.on('interactionCreate', async interaction => {
             });
           }
 
-          await interaction.editReply({ embeds: [embed] });
+          await interaction.editReply({ 
+            embeds: [embed],
+            ephemeral: true
+          });
 
         } catch (error) {
           console.error('Error in ask command:', error);
@@ -625,8 +628,10 @@ client.on('interactionCreate', async interaction => {
             errorMessage += ' The cosmic signals are distorted right now...';
           }
           
-          await interaction.editReply(errorMessage)
-            .catch(() => console.error('Failed to send error message'));
+          await interaction.editReply({ 
+            content: errorMessage,
+            ephemeral: true
+          }).catch(() => console.error('Failed to send error message'));
         }
         break;
     }
