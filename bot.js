@@ -347,6 +347,7 @@ client.on('interactionCreate', async interaction => {
 
       // Create embed pages for tweets
       const embeds = tweets.map((tweet, index) => {
+        const tweetId = tweet.url.split('/').pop().split('?')[0];
         return new EmbedBuilder()
           .setTitle(`Tweet Links (${index + 1}/${tweets.length})`)
           .setDescription(`[View Tweet](${tweet.url})\n\nContext: ${tweet.content.substring(0, 200)}${tweet.content.length > 200 ? '...' : ''}`)
@@ -355,7 +356,13 @@ client.on('interactionCreate', async interaction => {
           })
           .setURL(tweet.messageLink)
           .setTimestamp(tweet.timestamp)
-          .setColor('#1DA1F2'); // Twitter blue color
+          .setColor('#1DA1F2') // Twitter blue color
+          .addFields([
+            {
+              name: 'Direct Link',
+              value: `[Open in X/Twitter](${tweet.url})`
+            }
+          ]);
       });
 
       // Create gallery data
@@ -406,76 +413,83 @@ client.on('interactionCreate', async interaction => {
   }
 });
 
-// Handle button interactions
+// Button interaction handler
 client.on('interactionCreate', async interaction => {
   if (!interaction.isButton()) return;
 
-  const galleryData = activeGalleries.get(interaction.channelId);
-  if (!galleryData || interaction.user.id !== interaction.message.interaction.user.id) return;
+  const gallery = activeGalleries.get(interaction.channelId);
+  if (!gallery) return;
 
-  const { customId } = interaction;
+  try {
+    await interaction.deferUpdate();
 
-  if (customId === 'close') {
-    clearTimeout(galleryData.timeoutId);
-    activeGalleries.delete(interaction.channelId);
-    await interaction.update({
-      content: 'Gallery closed.',
-      embeds: [],
-      components: []
-    });
-    return;
+    if (interaction.customId === 'close') {
+      clearTimeout(gallery.timeoutId);
+      activeGalleries.delete(interaction.channelId);
+      await interaction.editReply({
+        content: 'Gallery closed.',
+        embeds: [],
+        components: []
+      });
+      return;
+    }
+
+    const { currentIndex, images, embeds } = gallery;
+    const isImageGallery = !!images;
+    const items = isImageGallery ? images : embeds;
+    let newIndex = currentIndex;
+
+    if (interaction.customId === 'next' && currentIndex < items.length - 1) {
+      newIndex = currentIndex + 1;
+    } else if (interaction.customId === 'prev' && currentIndex > 0) {
+      newIndex = currentIndex - 1;
+    }
+
+    gallery.currentIndex = newIndex;
+
+    const row = new ActionRowBuilder()
+      .addComponents(
+        new ButtonBuilder()
+          .setCustomId('prev')
+          .setLabel('Previous')
+          .setStyle(ButtonStyle.Primary)
+          .setDisabled(newIndex === 0),
+        new ButtonBuilder()
+          .setCustomId('next')
+          .setLabel('Next')
+          .setStyle(ButtonStyle.Primary)
+          .setDisabled(newIndex === items.length - 1),
+        new ButtonBuilder()
+          .setCustomId('close')
+          .setLabel('Close Gallery')
+          .setStyle(ButtonStyle.Danger)
+      );
+
+    if (isImageGallery) {
+      const currentImage = items[newIndex];
+      const embed = new EmbedBuilder()
+        .setTitle(`Image Gallery (${newIndex + 1}/${items.length})`)
+        .setImage(currentImage.url)
+        .setFooter({ 
+          text: `Posted by ${currentImage.author} • Click title to view original message`
+        })
+        .setURL(currentImage.messageLink)
+        .setTimestamp(currentImage.timestamp);
+
+      await interaction.editReply({
+        embeds: [embed],
+        components: [row]
+      });
+    } else {
+      await interaction.editReply({
+        embeds: [items[newIndex]],
+        components: [row]
+      });
+    }
+
+  } catch (error) {
+    console.error('Error handling button interaction:', error);
   }
-
-  // Handle navigation
-  if (customId === 'prev') {
-    galleryData.currentIndex--;
-  } else if (customId === 'next') {
-    galleryData.currentIndex++;
-  }
-
-  // Reset timeout
-  clearTimeout(galleryData.timeoutId);
-  galleryData.timeoutId = setTimeout(() => {
-    activeGalleries.delete(interaction.channelId);
-    interaction.update({
-      content: 'Gallery closed due to inactivity.',
-      embeds: [],
-      components: []
-    }).catch(console.error);
-  }, GALLERY_TIMEOUT);
-
-  const currentImage = galleryData.images[galleryData.currentIndex];
-  const embed = new EmbedBuilder()
-    .setTitle(`Image Gallery (${galleryData.currentIndex + 1}/${galleryData.images.length})`)
-    .setImage(currentImage.url)
-    .setFooter({ 
-      text: `Posted by ${currentImage.author} • Click title to view original message`
-    })
-    .setURL(currentImage.messageLink)
-    .setTimestamp(currentImage.timestamp);
-
-  const row = new ActionRowBuilder()
-    .addComponents(
-      new ButtonBuilder()
-        .setCustomId('prev')
-        .setLabel('Previous')
-        .setStyle(ButtonStyle.Primary)
-        .setDisabled(galleryData.currentIndex === 0),
-      new ButtonBuilder()
-        .setCustomId('next')
-        .setLabel('Next')
-        .setStyle(ButtonStyle.Primary)
-        .setDisabled(galleryData.currentIndex === galleryData.images.length - 1),
-      new ButtonBuilder()
-        .setCustomId('close')
-        .setLabel('Close Gallery')
-        .setStyle(ButtonStyle.Danger)
-    );
-
-  await interaction.update({
-    embeds: [embed],
-    components: [row]
-  });
 });
 
 // Error handling
