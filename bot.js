@@ -173,7 +173,7 @@ function createGalleryMessage(galleryData) {
     .setTitle(`Image Gallery (${galleryData.currentIndex + 1}/${galleryData.images.length}${galleryData.loading ? '+' : ''})`)
     .setImage(currentImage.url)
     .setFooter({ 
-      text: `Posted by ${currentImage.author} ��� Click title to view original message${galleryData.loading ? ' • Loading more images...' : ''}`
+      text: `Posted by ${currentImage.author}  Click title to view original message${galleryData.loading ? ' • Loading more images...' : ''}`
     })
     .setURL(currentImage.messageLink)
     .setTimestamp(currentImage.timestamp);
@@ -918,35 +918,24 @@ async function executeToolCall(toolCall, message, client) {
       case 'getChannelInfo':
         return await getChannelInfo(message.channel);
       case 'searchTweets':
-        const searchParams = {
+        const apiEndpoint = 'https://api.twitter.com/2/tweets/search/recent';
+        
+        const queryParameters = new URLSearchParams({
           'query': '#fishtanklive',
           'max_results': parsedArgs.limit || 10,
-          'tweet.fields': [
-            'created_at',
-            'public_metrics',
-            'entities',
-            'context_annotations'
-          ].join(','),
-          'expansions': [
-            'author_id',
-            'referenced_tweets.id'
-          ].join(',')
-        };
+          'tweet.fields': 'created_at,public_metrics,entities',
+          'expansions': 'author_id',
+          'user.fields': 'username'
+        }).toString();
 
         try {
-          // Decode the Bearer Token before using it
-          const decodedToken = decodeURIComponent(process.env.TWITTER_BEARER_TOKEN);
-          
-          const response = await fetch(
-            `https://api.twitter.com/2/tweets/search/recent?${new URLSearchParams(searchParams)}`,
-            {
-              method: 'GET',
-              headers: {
-                'Authorization': `Bearer ${decodedToken}`,
-                'Content-Type': 'application/json'
-              }
+          const response = await fetch(`${apiEndpoint}?${queryParameters}`, {
+            method: 'GET',
+            headers: {
+              'Authorization': `Bearer ${process.env.TWITTER_BEARER_TOKEN}`,
+              'Content-Type': 'application/json'
             }
-          );
+          });
 
           if (!response.ok) {
             const errorData = await response.json();
