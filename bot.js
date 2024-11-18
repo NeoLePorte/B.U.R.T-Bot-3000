@@ -587,34 +587,24 @@ client.on('interactionCreate', async interaction => {
           const completion = await openai.chat.completions.create({
             model: "grok-beta",
             messages: [
-              { role: "system", content: BURT_PROMPT },
-              { role: "user", content: question }
+              { 
+                role: "system", 
+                content: BURT_PROMPT + "\nKeep responses under 2000 characters for Discord compatibility." 
+              },
+              { 
+                role: "user", 
+                content: question 
+              }
             ],
             max_tokens: 500,
             temperature: 0.9,
             presence_penalty: 0.6,
-            frequency_penalty: 0.4
+            frequency_penalty: 0.4,
+            tools: discordTools
           });
 
           let response = completion.choices[0].message.content;
-          
-          // Check if response ends mid-sentence and try to clean it up
-          if (response.length === 500) {
-            // Find the last complete sentence
-            const lastPeriod = response.lastIndexOf('.');
-            const lastExclamation = response.lastIndexOf('!');
-            const lastQuestion = response.lastIndexOf('?');
-            
-            // Get the last complete sentence end position
-            const lastSentenceEnd = Math.max(lastPeriod, lastExclamation, lastQuestion);
-            
-            if (lastSentenceEnd > 0) {
-              response = response.substring(0, lastSentenceEnd + 1);
-            }
-            
-            // Add a closing note if truncated
-            response += ' [*BURT gets distracted by a shiny object*]';
-          }
+          response = truncateResponse(response); // Ensure it fits in Discord embed
 
           console.log(`BURT's response: ${response}`);
 
@@ -992,3 +982,19 @@ async function getServerEmojis(guild) {
     return [];
   }
 } 
+
+// Add this helper function
+function truncateResponse(response, maxLength = 4000) {
+  if (response.length <= maxLength) return response;
+  
+  const truncated = response.substring(0, maxLength);
+  const lastPeriod = truncated.lastIndexOf('.');
+  const lastExclamation = truncated.lastIndexOf('!');
+  const lastQuestion = truncated.lastIndexOf('?');
+  
+  const lastSentenceEnd = Math.max(lastPeriod, lastExclamation, lastQuestion);
+  
+  return lastSentenceEnd > -1
+    ? truncated.substring(0, lastSentenceEnd + 1) + '\n\n*[BURT\'s rambling fades into cosmic static...]*'
+    : truncated + '\n\n*[BURT\'s rambling fades into cosmic static...]*';
+}
