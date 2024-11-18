@@ -1115,7 +1115,7 @@ function truncateResponse(response, maxLength = 4000) {
 }
 
 // Add this constant at the top with other constants
-const MAX_EMBED_LENGTH = 4000; // Safe limit for Discord embeds
+const MAX_EMBED_LENGTH = 3000; // Safe limit for Discord embeds
 
 // Add this helper function
 function sanitizeResponse(content) {
