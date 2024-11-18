@@ -64,8 +64,16 @@ client.on('interactionCreate', async interaction => {
       
       // Filter for messages with images
       const imageMessages = Array.from(messages.values())
-        .filter(msg => msg.attachments.some(attachment => 
-          attachment.contentType?.startsWith('image/')));
+        .filter(msg => msg.attachments.some(attachment => {
+          // Check for common image extensions if contentType is not available
+          const url = attachment.url.toLowerCase();
+          return attachment.contentType?.startsWith('image/') || 
+                 url.endsWith('.jpg') || 
+                 url.endsWith('.jpeg') || 
+                 url.endsWith('.png') || 
+                 url.endsWith('.gif') ||
+                 url.endsWith('.webp');
+        }));
 
       if (imageMessages.length === 0) {
         await interaction.editReply('No images found in the recent messages!');
