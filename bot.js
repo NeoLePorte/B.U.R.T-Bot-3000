@@ -46,6 +46,107 @@ client.once('ready', async () => {
   }
 });
 
+// Helper function to process messages for images
+function processMessagesForImages(messages) {
+  const imageRegex = /\.(jpg|jpeg|png|gif|webp)(?:\?.*)?$/i;
+  const images = [];
+
+  for (const msg of messages.values()) {
+    for (const attachment of msg.attachments.values()) {
+      if (imageRegex.test(attachment.url) || attachment.contentType?.startsWith('image/')) {
+        images.push({
+          url: attachment.url,
+          author: msg.author.username,
+          timestamp: msg.createdTimestamp,
+          messageLink: msg.url
+        });
+      }
+    }
+  }
+  return images;
+}
+
+// Create gallery message
+function createGalleryMessage(galleryData) {
+  const currentImage = galleryData.images[galleryData.currentIndex];
+  const embed = new EmbedBuilder()
+    .setTitle(`Image Gallery (${galleryData.currentIndex + 1}/${galleryData.images.length}${galleryData.loading ? '+' : ''})`)
+    .setImage(currentImage.url)
+    .setFooter({ 
+      text: `Posted by ${currentImage.author} • Click title to view original message${galleryData.loading ? ' • Loading more images...' : ''}`
+    })
+    .setURL(currentImage.messageLink)
+    .setTimestamp(currentImage.timestamp);
+
+  const row = new ActionRowBuilder()
+    .addComponents(
+      new ButtonBuilder()
+        .setCustomId('prev')
+        .setLabel('Previous')
+        .setStyle(ButtonStyle.Primary)
+        .setDisabled(galleryData.currentIndex === 0),
+      new ButtonBuilder()
+        .setCustomId('next')
+        .setLabel('Next')
+        .setStyle(ButtonStyle.Primary)
+        .setDisabled(galleryData.currentIndex === galleryData.images.length - 1),
+      new ButtonBuilder()
+        .setCustomId('close')
+        .setLabel('Close Gallery')
+        .setStyle(ButtonStyle.Danger)
+    );
+
+  return { embeds: [embed], components: [row] };
+}
+
+// Background fetch function
+async function fetchRemainingImages(interaction, galleryData) {
+  const MAX_IMAGES = 100;
+  const oneDayAgo = Date.now() - (24 * 60 * 60 * 1000);
+  let lastId = galleryData.images[galleryData.images.length - 1]?.messageLink.split('/').pop();
+  
+  while (galleryData.images.length < MAX_IMAGES) {
+    const messages = await interaction.channel.messages.fetch({ 
+      limit: 100, 
+      before: lastId 
+    });
+    
+    if (messages.size === 0) break;
+    lastId = messages.last().id;
+
+    // Check if we've gone past 24 hours
+    if (messages.last().createdTimestamp < oneDayAgo) break;
+
+    const newImages = processMessagesForImages(messages);
+    if (newImages.length === 0) break;
+
+    // Add new images and update gallery
+    galleryData.images.push(...newImages);
+    if (galleryData.images.length > MAX_IMAGES) {
+      galleryData.images = galleryData.images.slice(0, MAX_IMAGES);
+      break;
+    }
+
+    // Update gallery message every 20 new images
+    if (newImages.length >= 20) {
+      try {
+        await interaction.editReply(createGalleryMessage(galleryData));
+      } catch (error) {
+        console.error('Failed to update gallery:', error);
+        break;
+      }
+    }
+  }
+
+  // Final update
+  galleryData.loading = false;
+  try {
+    await interaction.editReply(createGalleryMessage(galleryData));
+  } catch (error) {
+    console.error('Failed to update gallery:', error);
+  }
+}
+
 // Handle slash commands
 client.on('interactionCreate', async interaction => {
   if (!interaction.isCommand()) return;
@@ -57,63 +158,20 @@ client.on('interactionCreate', async interaction => {
     try {
       await interaction.deferReply({ ephemeral: true });
 
-      const MAX_IMAGES = 100;
-      const oneDayAgo = Date.now() - (24 * 60 * 60 * 1000);
-      let images = [];
-      let lastId = null;
-      const BATCH_SIZE = 100;
-      
-      // Pre-compile the image extension regex for better performance
-      const imageRegex = /\.(jpg|jpeg|png|gif|webp)(?:\?.*)?$/i;
+      // Initial quick fetch
+      const initialMessages = await interaction.channel.messages.fetch({ limit: 50 });
+      const initialImages = processMessagesForImages(initialMessages);
 
-      while (images.length < MAX_IMAGES) {
-        const messages = await interaction.channel.messages.fetch({ 
-          limit: BATCH_SIZE, 
-          before: lastId 
-        });
-        
-        if (messages.size === 0) break;
-        lastId = messages.last().id;
-
-        // Process messages in this batch
-        for (const msg of messages.values()) {
-          if (msg.createdTimestamp < oneDayAgo) {
-            // Exit both loops if we're past 24 hours
-            messages.clear();
-            break;
-          }
-
-          // Quick check if message has attachments before processing
-          if (msg.attachments.size === 0) continue;
-
-          // Process attachments
-          for (const attachment of msg.attachments.values()) {
-            if (images.length >= MAX_IMAGES) break;
-            
-            // Faster image check using regex
-            if (imageRegex.test(attachment.url) || attachment.contentType?.startsWith('image/')) {
-              images.push({
-                url: attachment.url,
-                author: msg.author.username,
-                timestamp: msg.createdTimestamp,
-                messageLink: msg.url
-              });
-            }
-          }
-        }
-      }
-
-      console.log(`Found ${images.length} images`);
-
-      if (images.length === 0) {
+      if (initialImages.length === 0) {
         await interaction.editReply('No images found in the recent messages!');
         return;
       }
 
-      // Create gallery data
+      // Create initial gallery
       const galleryData = {
-        images,
+        images: initialImages,
         currentIndex: 0,
+        loading: true,
         timeoutId: setTimeout(() => {
           activeGalleries.delete(interaction.channelId);
           interaction.editReply({
@@ -127,39 +185,12 @@ client.on('interactionCreate', async interaction => {
       // Store gallery data
       activeGalleries.set(interaction.channelId, galleryData);
 
-      // Create embed for first image
-      const embed = new EmbedBuilder()
-        .setTitle(`Image Gallery (1/${galleryData.images.length})`)
-        .setImage(galleryData.images[0].url)
-        .setFooter({ 
-          text: `Posted by ${galleryData.images[0].author} • Click title to view original message`
-        })
-        .setURL(galleryData.images[0].messageLink)
-        .setTimestamp(galleryData.images[0].timestamp);
+      // Send initial gallery
+      await interaction.editReply(createGalleryMessage(galleryData));
 
-      // Create navigation buttons change test.
-      const row = new ActionRowBuilder()
-        .addComponents(
-          new ButtonBuilder()
-            .setCustomId('prev')
-            .setLabel('Previous')
-            .setStyle(ButtonStyle.Primary)
-            .setDisabled(true),
-          new ButtonBuilder()
-            .setCustomId('next')
-            .setLabel('Next')
-            .setStyle(ButtonStyle.Primary)
-            .setDisabled(galleryData.images.length === 1),
-          new ButtonBuilder()
-            .setCustomId('close')
-            .setLabel('Close Gallery')
-            .setStyle(ButtonStyle.Danger)
-        );
+      // Start background fetch
+      fetchRemainingImages(interaction, galleryData).catch(console.error);
 
-      await interaction.editReply({
-        embeds: [embed],
-        components: [row]
-      });
     } catch (error) {
       console.error('Error creating image gallery:', error);
       await interaction.editReply('An error occurred while creating the image gallery.');
