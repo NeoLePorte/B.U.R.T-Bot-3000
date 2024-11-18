@@ -584,11 +584,32 @@ client.on('interactionCreate', async interaction => {
               { role: "system", content: BURT_PROMPT },
               { role: "user", content: question }
             ],
-            max_tokens: 128,
-            temperature: 0.9
+            max_tokens: 500,
+            temperature: 0.9,
+            presence_penalty: 0.6,
+            frequency_penalty: 0.4
           });
 
-          const response = completion.choices[0].message.content;
+          let response = completion.choices[0].message.content;
+          
+          // Check if response ends mid-sentence and try to clean it up
+          if (response.length === 500) {
+            // Find the last complete sentence
+            const lastPeriod = response.lastIndexOf('.');
+            const lastExclamation = response.lastIndexOf('!');
+            const lastQuestion = response.lastIndexOf('?');
+            
+            // Get the last complete sentence end position
+            const lastSentenceEnd = Math.max(lastPeriod, lastExclamation, lastQuestion);
+            
+            if (lastSentenceEnd > 0) {
+              response = response.substring(0, lastSentenceEnd + 1);
+            }
+            
+            // Add a closing note if truncated
+            response += ' [*BURT gets distracted by a shiny object*]';
+          }
+
           console.log(`BURT's response: ${response}`);
 
           const embed = new EmbedBuilder()
