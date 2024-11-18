@@ -911,29 +911,32 @@ async function executeToolCall(toolCall, message, client) {
       case 'getChannelInfo':
         return await getChannelInfo(message.channel);
       case 'searchTweets':
-        const apiEndpoint = 'https://api.twitter.com/2/tweets/search/recent';
-        
-        // Ensure limit is between 10 and 100
-        const tweetLimit = Math.max(10, Math.min(100, parsedArgs.limit || 10));
-        
-        const queryParameters = new URLSearchParams({
-          'query': '#fishtanklive',
-          'max_results': tweetLimit.toString(),
-          'tweet.fields': 'created_at,public_metrics,entities',
-          'expansions': 'author_id',
-          'user.fields': 'username'
-        }).toString();
-
         try {
-          console.log('Making Twitter API request with parameters:', queryParameters);
-          
-          const response = await fetch(`${apiEndpoint}?${queryParameters}`, {
-            method: 'GET',
-            headers: {
-              'Authorization': `Bearer ${process.env.TWITTER_BEARER_TOKEN}`,
-              'Content-Type': 'application/json'
+          // Parse the arguments and log them for debugging
+          const parsedArgs = JSON.parse(toolCall.function.arguments);
+          console.log('Original parsed arguments:', parsedArgs);
+
+          // Force minimum of 10 results regardless of what's passed in
+          const searchParams = {
+            'query': '#fishtanklive',
+            'max_results': '10',  // Hardcode to 10 as minimum required by Twitter
+            'tweet.fields': 'created_at,public_metrics,entities',
+            'expansions': 'author_id',
+            'user.fields': 'username'
+          };
+
+          console.log('Final search parameters:', searchParams);
+
+          const response = await fetch(
+            `https://api.twitter.com/2/tweets/search/recent?${new URLSearchParams(searchParams)}`,
+            {
+              method: 'GET',
+              headers: {
+                'Authorization': `Bearer ${process.env.TWITTER_BEARER_TOKEN}`,
+                'Content-Type': 'application/json'
+              }
             }
-          });
+          );
 
           if (!response.ok) {
             const errorData = await response.json();
