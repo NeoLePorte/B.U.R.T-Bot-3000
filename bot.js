@@ -57,7 +57,7 @@ client.on('interactionCreate', async interaction => {
     const amount = Math.min(options.getInteger('amount') || 100, 100);
 
     try {
-      await interaction.deferReply();
+      await interaction.deferReply({ ephemeral: true });
 
       // Fetch messages
       const messages = await interaction.channel.messages.fetch({ limit: amount });
@@ -148,7 +148,7 @@ client.on('interactionCreate', async interaction => {
   if (!interaction.isButton()) return;
 
   const galleryData = activeGalleries.get(interaction.channelId);
-  if (!galleryData) return;
+  if (!galleryData || interaction.user.id !== interaction.message.interaction.user.id) return;
 
   const { customId } = interaction;
 
