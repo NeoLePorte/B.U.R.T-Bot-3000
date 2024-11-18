@@ -912,20 +912,25 @@ async function executeToolCall(toolCall, message, client) {
         return await getChannelInfo(message.channel);
       case 'searchTweets':
         try {
-          // Parse the arguments and log them for debugging
-          const parsedArgs = JSON.parse(toolCall.function.arguments);
-          console.log('Original parsed arguments:', parsedArgs);
+          if (!canMakeTwitterRequest()) {
+            console.log('Rate limit reached, waiting...');
+            return {
+              error: true,
+              message: 'Rate limit reached',
+              details: 'Too many requests to Twitter API. Please try again in a few minutes.'
+            };
+          }
 
-          // Force minimum of 10 results regardless of what's passed in
+          // Increment request counter
+          TWITTER_RATE_LIMIT.requests++;
+          
           const searchParams = {
             'query': '#fishtanklive',
-            'max_results': '10',  // Hardcode to 10 as minimum required by Twitter
+            'max_results': '10',
             'tweet.fields': 'created_at,public_metrics,entities',
             'expansions': 'author_id',
             'user.fields': 'username'
           };
-
-          console.log('Final search parameters:', searchParams);
 
           const response = await fetch(
             `https://api.twitter.com/2/tweets/search/recent?${new URLSearchParams(searchParams)}`,
@@ -937,6 +942,17 @@ async function executeToolCall(toolCall, message, client) {
               }
             }
           );
+
+          // Handle rate limit headers if present
+          const rateLimitRemaining = response.headers.get('x-rate-limit-remaining');
+          const rateLimitReset = response.headers.get('x-rate-limit-reset');
+          
+          if (rateLimitRemaining) {
+            TWITTER_RATE_LIMIT.requests = TWITTER_RATE_LIMIT.maxRequests - parseInt(rateLimitRemaining);
+          }
+          if (rateLimitReset) {
+            TWITTER_RATE_LIMIT.resetTime = parseInt(rateLimitReset) * 1000;
+          }
 
           if (!response.ok) {
             const errorData = await response.json();
@@ -1208,4 +1224,25 @@ function sanitizeResponse(content) {
       '\n\n*[BURT\'s rambling fades into cosmic static...]*';
   }
   return content;
+}
+
+// Add at the top of the file with other constants
+const TWITTER_RATE_LIMIT = {
+  windowMs: 15 * 60 * 1000, // 15 minutes
+  maxRequests: 180, // Twitter's standard rate limit for search
+  requests: 0,
+  resetTime: Date.now()
+};
+
+// Add this helper function
+function canMakeTwitterRequest() {
+  const now = Date.now();
+  
+  // Reset counter if window has passed
+  if (now > TWITTER_RATE_LIMIT.resetTime) {
+    TWITTER_RATE_LIMIT.requests = 0;
+    TWITTER_RATE_LIMIT.resetTime = now + TWITTER_RATE_LIMIT.windowMs;
+  }
+  
+  return TWITTER_RATE_LIMIT.requests < TWITTER_RATE_LIMIT.maxRequests;
 }
