@@ -54,6 +54,7 @@ jobs:
             cd /root/burt-bot && \
             echo "DISCORD_TOKEN=${{ secrets.DISCORD_TOKEN }}" > .env && \
             echo "XAI_API_KEY=${{ secrets.XAI_API_KEY }}" >> .env && \
+            echo "TWITTER_BEARER_TOKEN=${{ secrets.TWITTER_BEARER_TOKEN }}" >> .env && \
             npm install && \
             pm2 restart burt-bot || pm2 start bot.js --name burt-bot && \
             pm2 save

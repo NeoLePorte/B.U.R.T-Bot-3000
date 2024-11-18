@@ -1,6 +1,7 @@
 const { Client, GatewayIntentBits, EmbedBuilder, ActionRowBuilder, ButtonBuilder, ButtonStyle, MessageMentions } = require('discord.js');
 require('dotenv').config();
 const OpenAI = require("openai");
+const fetch = require('node-fetch');
 
 // Initialize OpenAI client with correct xAI configuration
 const openai = new OpenAI({
@@ -683,7 +684,7 @@ client.on('interactionCreate', async interaction => {
           console.log('Content:', sanitizedContent);
 
           const embed = new EmbedBuilder()
-            .setTitle('🤪 BURT Speaks! 🎭')
+            .setTitle('🤪 BURT Speaks! ')
             .setDescription(sanitizedContent)
             .setColor('#FF69B4')
             .setFooter({ 
@@ -817,7 +818,7 @@ const functions = [
         userId: {
           type: "string",
           description: "The Discord user ID to look up",
-          example_value: "123456789" // Added example value
+          example_value: "123456789"
         }
       },
       required: ["userId"],
@@ -849,6 +850,35 @@ const functions = [
       required: [],
       optional: []
     }
+  },
+  {
+    name: "searchTweets",
+    description: "Search recent tweets containing #fishtanklive",
+    parameters: {
+      type: "object",
+      properties: {
+        limit: {
+          type: "number",
+          description: "Number of tweets to return (max 100)",
+          default: 10
+        },
+        sort_order: {
+          type: "string",
+          enum: ["recency", "relevancy"],
+          description: "Sort tweets by recency or relevancy",
+          default: "recency"
+        },
+        tweet_fields: {
+          type: "array",
+          items: {
+            type: "string",
+            enum: ["created_at", "public_metrics", "entities", "context_annotations"]
+          },
+          description: "Additional tweet fields to include",
+          default: ["created_at", "public_metrics"]
+        }
+      }
+    }
   }
 ];
 
@@ -876,6 +906,63 @@ async function executeToolCall(toolCall, message, client) {
         return await getRecentMessages(message.channel, parsedArgs.limit || 5);
       case 'getChannelInfo':
         return await getChannelInfo(message.channel);
+      case 'searchTweets':
+        const searchParams = {
+          query: '#fishtanklive',
+          max_results: parsedArgs.limit || 10,
+          sort_order: parsedArgs.sort_order || 'recency',
+          tweet_fields: [
+            'created_at',
+            'public_metrics',
+            'entities',
+            'context_annotations'
+          ].join(','),
+          expansions: [
+            'author_id',
+            'referenced_tweets.id',
+            'attachments.media_keys'
+          ].join(','),
+          media_fields: [
+            'url',
+            'preview_image_url',
+            'type'
+          ].join(',')
+        };
+
+        try {
+          const response = await fetch(
+            `https://api.x.com/2/tweets/search/recent?${new URLSearchParams(searchParams)}`,
+            {
+              headers: {
+                'Authorization': `Bearer ${process.env.TWITTER_BEARER_TOKEN}`
+              }
+            }
+          );
+
+          if (!response.ok) {
+            throw new Error(`Twitter API error: ${response.status}`);
+          }
+
+          const data = await response.json();
+          return {
+            tweets: data.data?.map(tweet => ({
+              id: tweet.id,
+              text: tweet.text,
+              created_at: tweet.created_at,
+              metrics: tweet.public_metrics,
+              author: data.includes?.users?.find(u => u.id === tweet.author_id)?.username
+            })) || [],
+            meta: data.meta
+          };
+        } catch (error) {
+          console.error('Twitter search error:', error);
+          return {
+            error: true,
+            message: 'Failed to fetch tweets',
+            details: error.message
+          };
+        }
+        break;
       default:
         throw new Error(`Unknown tool: ${name}`);
     }
@@ -911,10 +998,9 @@ client.on('messageCreate', async message => {
         username: user.username
       }));
     
-    const question = message.content.replace(/<@!?(\d+)>/g, '').trim();
     const contextualQuestion = mentionedUsers.length > 0 
-      ? `[Context: This message mentions users: ${JSON.stringify(mentionedUsers)}]\n\n${question}`
-      : question;
+      ? `[Context: This message mentions users: ${JSON.stringify(mentionedUsers)}]\n\n${message.content}`
+      : message.content;
 
     console.log('\n=== New BURT Query ===');
     console.log(`From: ${message.author.username}`);
@@ -985,7 +1071,7 @@ client.on('messageCreate', async message => {
       console.log(`Sanitized: ${sanitizedContent.length}`);
 
       const embed = new EmbedBuilder()
-        .setTitle('🤪 BURT Speaks! 🎭')
+        .setTitle('🤪 BURT Speaks! ')
         .setDescription(sanitizedContent)
         .setColor('#FF69B4')
         .setFooter({ 
@@ -1051,8 +1137,12 @@ async function getChannelInfo(channel) {
       threadCount: channel.threads?.cache.size
     };
   } catch (error) {
-    console.error('Error fetching channel info:', error);
-    return null;
+    console.error('Error getting channel info:', error);
+    return {
+      error: true,
+      message: 'Failed to get channel info',
+      details: error.message
+    };
   }
 } 
 
