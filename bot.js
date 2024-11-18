@@ -57,93 +57,70 @@ client.on('interactionCreate', async interaction => {
     try {
       await interaction.deferReply({ ephemeral: true });
 
-      // Calculate timestamp for 24 hours ago
+      const MAX_IMAGES = 100;
       const oneDayAgo = Date.now() - (24 * 60 * 60 * 1000);
-      let allMessages = [];
+      let images = [];
       let lastId = null;
+      const BATCH_SIZE = 100;
       
-      while (true) {
-        const fetchOptions = { limit: 100 };
-        if (lastId) fetchOptions.before = lastId;
-        
-        const messages = await interaction.channel.messages.fetch(fetchOptions);
-        console.log(`Fetched batch of ${messages.size} messages`);
+      // Pre-compile the image extension regex for better performance
+      const imageRegex = /\.(jpg|jpeg|png|gif|webp)(?:\?.*)?$/i;
+
+      while (images.length < MAX_IMAGES) {
+        const messages = await interaction.channel.messages.fetch({ 
+          limit: BATCH_SIZE, 
+          before: lastId 
+        });
         
         if (messages.size === 0) break;
-        
-        // Filter messages within last 24 hours
-        const recentMessages = Array.from(messages.values()).filter(msg => msg.createdTimestamp > oneDayAgo);
-        if (recentMessages.length === 0) break; // Stop if we've gone past 24 hours
-        
-        allMessages = allMessages.concat(recentMessages);
         lastId = messages.last().id;
-        
-        console.log(`Batch time range: ${messages.first()?.createdAt} to ${messages.last()?.createdAt}`);
+
+        // Process messages in this batch
+        for (const msg of messages.values()) {
+          if (msg.createdTimestamp < oneDayAgo) {
+            // Exit both loops if we're past 24 hours
+            messages.clear();
+            break;
+          }
+
+          // Quick check if message has attachments before processing
+          if (msg.attachments.size === 0) continue;
+
+          // Process attachments
+          for (const attachment of msg.attachments.values()) {
+            if (images.length >= MAX_IMAGES) break;
+            
+            // Faster image check using regex
+            if (imageRegex.test(attachment.url) || attachment.contentType?.startsWith('image/')) {
+              images.push({
+                url: attachment.url,
+                author: msg.author.username,
+                timestamp: msg.createdTimestamp,
+                messageLink: msg.url
+              });
+            }
+          }
+        }
       }
 
-      console.log(`Total messages fetched from last 24 hours: ${allMessages.length}`);
+      console.log(`Found ${images.length} images`);
 
-      // Process images as before, but use allMessages instead of messages
-      const imageMessages = allMessages.filter(msg => msg.attachments.some(attachment => {
-        const url = attachment.url.toLowerCase();
-        const cleanUrl = url.split('?')[0];
-        const isImage = attachment.contentType?.startsWith('image/') || 
-               cleanUrl.endsWith('.jpg') || 
-               cleanUrl.endsWith('.jpeg') || 
-               cleanUrl.endsWith('.png') || 
-               cleanUrl.endsWith('.gif') ||
-               cleanUrl.endsWith('.webp');
-        
-        // Debug logging
-        if (msg.attachments.size > 0) {
-          console.log(`Message ${msg.id} has ${msg.attachments.size} attachments`);
-          console.log(`URL: ${url} - Is Image: ${isImage}`);
-        }
-        
-        return isImage;
-      }));
-      
-      console.log(`Found ${imageMessages.length} messages with images`);
-
-      if (imageMessages.length === 0) {
+      if (images.length === 0) {
         await interaction.editReply('No images found in the recent messages!');
         return;
       }
 
       // Create gallery data
       const galleryData = {
-        images: imageMessages
-          .reverse() // Reverse to show oldest first
-          .flatMap(msg => 
-            Array.from(msg.attachments.values())
-              .filter(attachment => {
-                const url = attachment.url.toLowerCase();
-                const cleanUrl = url.split('?')[0];
-                return attachment.contentType?.startsWith('image/') || 
-                       cleanUrl.endsWith('.jpg') || 
-                       cleanUrl.endsWith('.jpeg') || 
-                       cleanUrl.endsWith('.png') || 
-                       cleanUrl.endsWith('.gif') ||
-                       cleanUrl.endsWith('.webp');
-              })
-              .map(attachment => ({
-                url: attachment.url,
-                author: msg.author.username,
-                timestamp: msg.createdTimestamp,
-                messageLink: msg.url
-              }))
-          ),
+        images,
         currentIndex: 0,
         timeoutId: setTimeout(() => {
-          const gallery = activeGalleries.get(interaction.channelId);
-          if (gallery) {
-            activeGalleries.delete(interaction.channelId);
-            interaction.editReply({
-              content: 'Gallery closed due to inactivity.',
-              embeds: [],
-              components: []
-            }).catch(console.error);
-          }
+          activeGalleries.delete(interaction.channelId);
+          interaction.editReply({
+            content: 'Gallery closed due to inactivity.',
+            embeds: [],
+            components: []
+          }).catch(console.error);
         }, GALLERY_TIMEOUT)
       };
 
