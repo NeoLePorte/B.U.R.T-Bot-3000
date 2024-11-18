@@ -876,15 +876,29 @@ async function executeToolCall(toolCall, message, client) {
   const { name, arguments: args } = toolCall.function;
   const parsedArgs = JSON.parse(args);
 
-  switch (name) {
-    case 'getUserInfo':
-      return await getDiscordUserInfo(client, parsedArgs.userId);
-    case 'getRecentMessages':
-      return await getRecentMessages(message.channel, parsedArgs.limit || 5);
-    case 'getChannelInfo':
-      return await getChannelInfo(message.channel);
-    default:
-      throw new Error(`Unknown tool: ${name}`);
+  try {
+    switch (name) {
+      case 'getUserInfo':
+        const userInfo = await getDiscordUserInfo(client, parsedArgs.userId);
+        if (userInfo.error) {
+          console.log('User info error:', userInfo);
+          return userInfo; // Return the error info to the AI
+        }
+        return userInfo;
+      case 'getRecentMessages':
+        return await getRecentMessages(message.channel, parsedArgs.limit || 5);
+      case 'getChannelInfo':
+        return await getChannelInfo(message.channel);
+      default:
+        throw new Error(`Unknown tool: ${name}`);
+    }
+  } catch (error) {
+    console.error(`Tool execution failed for ${name}:`, error);
+    return {
+      error: true,
+      message: `Failed to execute ${name}`,
+      details: error.message
+    };
   }
 }
 
@@ -993,8 +1007,13 @@ async function getDiscordUserInfo(client, userId) {
       avatarURL: user.displayAvatarURL(),
     };
   } catch (error) {
-    console.error('Error fetching user info:', error);
-    return null;
+    console.error(`Error fetching user info for ID ${userId}:`, error);
+    // Return a structured error response instead of null
+    return {
+      error: true,
+      message: `Unable to find user with ID ${userId}`,
+      details: error.message
+    };
   }
 } 
 
