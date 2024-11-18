@@ -289,104 +289,100 @@ client.on('interactionCreate', async interaction => {
   } else if (commandName === 'tweets') {
     try {
       await interaction.deferReply({ ephemeral: true });
-      console.time('tweetFetch');
+      console.time('initialTweetFetch');
       
       const MAX_TWEETS = 50;
-      const FETCH_TIMEOUT = 15000;
+      const INITIAL_FETCH = 20; // Show first 20 messages quickly
       let tweets = [];
       let lastId = null;
+      let isLoading = true;
 
-      // Regular expressions for X/Twitter URLs and images
+      // Regular expressions
       const tweetRegex = /(?:https?:\/\/)?(?:www\.)?(twitter\.com|x\.com)\/[a-zA-Z0-9_]+\/status\/[0-9]+/g;
       const imageRegex = /https:\/\/pbs\.twimg\.com\/media\/[^\s]+/g;
 
-      const fetchTweets = async () => {
-        while (tweets.length < MAX_TWEETS) {
-          const messages = await interaction.channel.messages.fetch({ 
-            limit: 100,
-            before: lastId 
-          });
+      // Process messages function
+      const processMessages = (messages) => {
+        const newTweets = [];
+        for (const msg of messages.values()) {
+          const tweetMatches = msg.content.match(tweetRegex);
+          if (!tweetMatches) continue;
+
+          // Look for tweet images in embeds or content
+          let tweetImage = null;
           
-          if (messages.size === 0) break;
-          lastId = messages.last().id;
-
-          // Process messages for tweets
-          for (const msg of messages.values()) {
-            const tweetMatches = msg.content.match(tweetRegex);
-            if (!tweetMatches) continue;
-
-            // Look for tweet images in embeds or content
-            let tweetImage = null;
-            
-            // Check message embeds for images
-            if (msg.embeds.length > 0) {
-              const imageEmbed = msg.embeds.find(embed => embed.image);
-              if (imageEmbed && imageEmbed.image) {
-                tweetImage = imageEmbed.image.url;
+          // Check all possible embed image sources
+          if (msg.embeds.length > 0) {
+            for (const embed of msg.embeds) {
+              if (embed.image) {
+                tweetImage = embed.image.url;
+                break;
               }
-            }
-            
-            // If no embed image, try to find image URL in content
-            if (!tweetImage) {
-              const imageMatches = msg.content.match(imageRegex);
-              if (imageMatches) {
-                tweetImage = imageMatches[0];
+              if (embed.thumbnail) {
+                tweetImage = embed.thumbnail.url;
+                break;
               }
-            }
-
-            for (const url of tweetMatches) {
-              tweets.push({
-                url: url,
-                author: msg.author.username,
-                timestamp: msg.createdTimestamp,
-                messageLink: msg.url,
-                content: msg.content,
-                image: tweetImage
-              });
-              if (tweets.length >= MAX_TWEETS) return;
             }
           }
+          
+          // Backup: check for direct image links
+          if (!tweetImage) {
+            const imageMatches = msg.content.match(imageRegex);
+            if (imageMatches) {
+              tweetImage = imageMatches[0];
+            }
+          }
+
+          console.log(`Found tweet with image: ${tweetImage ? 'yes' : 'no'}`); // Debug log
+
+          for (const url of tweetMatches) {
+            newTweets.push({
+              url: url,
+              author: msg.author.username,
+              timestamp: msg.createdTimestamp,
+              messageLink: msg.url,
+              content: msg.content,
+              image: tweetImage,
+              embeds: msg.embeds // Store all embeds for debugging
+            });
+          }
         }
+        return newTweets;
       };
 
-      // Create a promise that resolves after timeout
-      const timeoutPromise = new Promise((resolve) => {
-        setTimeout(() => resolve('timeout'), FETCH_TIMEOUT);
-      });
+      // Initial quick fetch
+      const initialMessages = await interaction.channel.messages.fetch({ limit: INITIAL_FETCH });
+      tweets = processMessages(initialMessages);
+      lastId = initialMessages.last()?.id;
 
-      await Promise.race([fetchTweets(), timeoutPromise]);
-      console.timeEnd('tweetFetch');
+      console.timeEnd('initialTweetFetch');
       
       if (tweets.length === 0) {
         await interaction.editReply('No X/Twitter links found in the recent messages!');
         return;
       }
 
-      console.log(`Found ${tweets.length} tweets`);
-
-      // Create embed pages for tweets
-      const embeds = tweets.map((tweet, index) => {
+      // Create initial gallery
+      const createEmbed = (tweet, index, total) => {
         const embed = new EmbedBuilder()
-          .setTitle(`Tweet Links (${index + 1}/${tweets.length})`)
+          .setTitle(`Tweet Links (${index + 1}/${total}${isLoading ? '+' : ''})`)
           .setDescription(`[View Tweet](${tweet.url})\n\nContext: ${tweet.content.substring(0, 200)}${tweet.content.length > 200 ? '...' : ''}`)
           .setFooter({ 
-            text: `Posted by ${tweet.author} • Click title to view original message`
+            text: `Posted by ${tweet.author} • Click title to view original message${isLoading ? ' • Loading more...' : ''}`
           })
           .setURL(tweet.messageLink)
           .setTimestamp(tweet.timestamp)
           .setColor('#1DA1F2');
 
-        // Add the image if available
         if (tweet.image) {
           embed.setImage(tweet.image);
         }
 
         return embed;
-      });
+      };
 
-      // Create gallery data
       const galleryData = {
-        embeds,
+        tweets,
         currentIndex: 0,
         timeoutId: setTimeout(() => {
           activeGalleries.delete(interaction.channelId);
@@ -399,30 +395,81 @@ client.on('interactionCreate', async interaction => {
       };
 
       // Create navigation row
-      const row = new ActionRowBuilder()
-        .addComponents(
-          new ButtonBuilder()
-            .setCustomId('prev')
-            .setLabel('Previous')
-            .setStyle(ButtonStyle.Primary)
-            .setDisabled(true),
-          new ButtonBuilder()
-            .setCustomId('next')
-            .setLabel('Next')
-            .setStyle(ButtonStyle.Primary)
-            .setDisabled(tweets.length === 1),
-          new ButtonBuilder()
-            .setCustomId('close')
-            .setLabel('Close Gallery')
-            .setStyle(ButtonStyle.Danger)
-        );
+      const createRow = (currentIndex, totalTweets) => {
+        return new ActionRowBuilder()
+          .addComponents(
+            new ButtonBuilder()
+              .setCustomId('prev')
+              .setLabel('Previous')
+              .setStyle(ButtonStyle.Primary)
+              .setDisabled(currentIndex === 0),
+            new ButtonBuilder()
+              .setCustomId('next')
+              .setLabel('Next')
+              .setStyle(ButtonStyle.Primary)
+              .setDisabled(currentIndex === totalTweets - 1),
+            new ButtonBuilder()
+              .setCustomId('close')
+              .setLabel('Close Gallery')
+              .setStyle(ButtonStyle.Danger)
+          );
+      };
 
-      // Store gallery data and send response
-      activeGalleries.set(interaction.channelId, galleryData);
+      // Send initial gallery
       await interaction.editReply({
-        embeds: [embeds[0]],
-        components: [row]
+        embeds: [createEmbed(tweets[0], 0, tweets.length)],
+        components: [createRow(0, tweets.length)]
       });
+
+      activeGalleries.set(interaction.channelId, galleryData);
+
+      // Background loading
+      (async () => {
+        try {
+          while (tweets.length < MAX_TWEETS && lastId) {
+            const messages = await interaction.channel.messages.fetch({ 
+              limit: 100,
+              before: lastId 
+            });
+            
+            if (messages.size === 0) break;
+            
+            const newTweets = processMessages(messages);
+            if (newTweets.length === 0) break;
+            
+            tweets.push(...newTweets);
+            if (tweets.length > MAX_TWEETS) {
+              tweets = tweets.slice(0, MAX_TWEETS);
+              break;
+            }
+            
+            lastId = messages.last()?.id;
+            
+            // Update gallery data
+            galleryData.tweets = tweets;
+            
+            // Update the current view if still on first page
+            if (galleryData.currentIndex === 0) {
+              await interaction.editReply({
+                embeds: [createEmbed(tweets[0], 0, tweets.length)],
+                components: [createRow(0, tweets.length)]
+              });
+            }
+          }
+          
+          isLoading = false;
+          
+          // Final update
+          if (galleryData.currentIndex === 0) {
+            await interaction.editReply({
+              embeds: [createEmbed(tweets[galleryData.currentIndex], galleryData.currentIndex, tweets.length)],
+              components: [createRow(galleryData.currentIndex, tweets.length)]
+            });
+          }
+        } catch (error) {
+          console.error('Error in background loading:', error);
+        }
+      })();
 
     } catch (error) {
       console.error('Error creating tweet gallery:', error);
@@ -453,15 +500,13 @@ client.on('interactionCreate', async interaction => {
       return;
     }
 
-    const { currentIndex, images, embeds } = gallery;
-    const isImageGallery = !!images;
-    const items = isImageGallery ? images : embeds;
-    let newIndex = currentIndex;
+    const items = gallery.tweets || gallery.images;
+    let newIndex = gallery.currentIndex;
 
-    if (interaction.customId === 'next' && currentIndex < items.length - 1) {
-      newIndex = currentIndex + 1;
-    } else if (interaction.customId === 'prev' && currentIndex > 0) {
-      newIndex = currentIndex - 1;
+    if (interaction.customId === 'next' && newIndex < items.length - 1) {
+      newIndex = newIndex + 1;
+    } else if (interaction.customId === 'prev' && newIndex > 0) {
+      newIndex = newIndex - 1;
     }
 
     gallery.currentIndex = newIndex;
@@ -484,7 +529,27 @@ client.on('interactionCreate', async interaction => {
           .setStyle(ButtonStyle.Danger)
       );
 
-    if (isImageGallery) {
+    if (gallery.tweets) {
+      const currentTweet = items[newIndex];
+      const embed = new EmbedBuilder()
+        .setTitle(`Tweet Links (${newIndex + 1}/${items.length})`)
+        .setDescription(`[View Tweet](${currentTweet.url})\n\nContext: ${currentTweet.content.substring(0, 200)}${currentTweet.content.length > 200 ? '...' : ''}`)
+        .setFooter({ 
+          text: `Posted by ${currentTweet.author} • Click title to view original message`
+        })
+        .setURL(currentTweet.messageLink)
+        .setTimestamp(currentTweet.timestamp)
+        .setColor('#1DA1F2');
+
+      if (currentTweet.image) {
+        embed.setImage(currentTweet.image);
+      }
+
+      await interaction.editReply({
+        embeds: [embed],
+        components: [row]
+      });
+    } else {
       const currentImage = items[newIndex];
       const embed = new EmbedBuilder()
         .setTitle(`Image Gallery (${newIndex + 1}/${items.length})`)
@@ -497,11 +562,6 @@ client.on('interactionCreate', async interaction => {
 
       await interaction.editReply({
         embeds: [embed],
-        components: [row]
-      });
-    } else {
-      await interaction.editReply({
-        embeds: [items[newIndex]],
         components: [row]
       });
     }
