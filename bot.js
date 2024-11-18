@@ -870,23 +870,16 @@ const functions = [
       properties: {
         limit: {
           type: "number",
-          description: "Number of tweets to return (max 100)",
-          default: 10
+          description: "Number of tweets to return (min: 10, max: 100)",
+          default: 10,
+          minimum: 10,
+          maximum: 100
         },
         sort_order: {
           type: "string",
           enum: ["recency", "relevancy"],
           description: "Sort tweets by recency or relevancy",
           default: "recency"
-        },
-        tweet_fields: {
-          type: "array",
-          items: {
-            type: "string",
-            enum: ["created_at", "public_metrics", "entities", "context_annotations"]
-          },
-          description: "Additional tweet fields to include",
-          default: ["created_at", "public_metrics"]
         }
       }
     }
@@ -920,15 +913,20 @@ async function executeToolCall(toolCall, message, client) {
       case 'searchTweets':
         const apiEndpoint = 'https://api.twitter.com/2/tweets/search/recent';
         
+        // Ensure limit is between 10 and 100
+        const tweetLimit = Math.max(10, Math.min(100, parsedArgs.limit || 10));
+        
         const queryParameters = new URLSearchParams({
           'query': '#fishtanklive',
-          'max_results': parsedArgs.limit || 10,
+          'max_results': tweetLimit.toString(),
           'tweet.fields': 'created_at,public_metrics,entities',
           'expansions': 'author_id',
           'user.fields': 'username'
         }).toString();
 
         try {
+          console.log('Making Twitter API request with parameters:', queryParameters);
+          
           const response = await fetch(`${apiEndpoint}?${queryParameters}`, {
             method: 'GET',
             headers: {
