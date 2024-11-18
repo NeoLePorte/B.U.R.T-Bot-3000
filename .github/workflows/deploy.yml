@@ -1,4 +1,4 @@
-name: Deploy to DigitalOcean
+name: Deploy to Server
 
 on:
   push:
@@ -8,51 +8,29 @@ jobs:
   deploy:
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v3
+      - uses: actions/checkout@v2
       
-      - name: Debug Setup
-        run: |
-          mkdir -p ~/.ssh
-          echo "Setting up SSH directory..."
-          ls -la ~/.ssh
-      
-      - name: Install SSH Key
-        run: |
-          echo "Installing SSH key..."
-          echo "${{ secrets.SSH_PRIVATE_KEY }}" > ~/.ssh/deploy_key
-          chmod 600 ~/.ssh/deploy_key
-          echo "Key installed. Checking..."
-          ls -la ~/.ssh/deploy_key
-          
-      - name: Add Known Hosts
-        run: |
-          echo "Adding known hosts..."
-          ssh-keyscan -H ${{ secrets.SSH_HOST }} >> ~/.ssh/known_hosts
-          chmod 644 ~/.ssh/known_hosts
-          echo "Known hosts file:"
-          cat ~/.ssh/known_hosts
-          
-      - name: Test SSH Connection (Verbose)
-        run: |
-          echo "Testing SSH connection with verbose output..."
-          ssh -v -i ~/.ssh/deploy_key -o StrictHostKeyChecking=no ${{ secrets.SSH_USER }}@${{ secrets.SSH_HOST }} 'echo "Connection test"'
-      
-      - name: Deploy Files
-        if: success()
-        run: |
-          echo "Deploying files..."
-          rsync -avz -e "ssh -i ~/.ssh/deploy_key -o StrictHostKeyChecking=no" \
-            --exclude '.git*' \
-            --exclude 'node_modules' \
-            ./ ${{ secrets.SSH_USER }}@${{ secrets.SSH_HOST }}:/root/burt-bot/
-            
-      - name: Run Deployment Commands
-        if: success()
-        run: |
-          echo "Running deployment commands..."
-          ssh -i ~/.ssh/deploy_key -o StrictHostKeyChecking=no ${{ secrets.SSH_USER }}@${{ secrets.SSH_HOST }} '
-            cd /root/burt-bot && \
-            npm install && \
-            pm2 restart burt-bot || pm2 start index.js --name burt-bot && \
-            pm2 save
-          '
+      - name: Copy files to server
+        uses: appleboy/scp-action@master
+        with:
+          host: ${{ secrets.HOST }}
+          username: ${{ secrets.USERNAME }}
+          key: ${{ secrets.SSH_KEY }}
+          source: "."
+          target: "/root/burt-bot"
+
+      - name: Execute deployment commands
+        uses: appleboy/ssh-action@master
+        with:
+          host: ${{ secrets.HOST }}
+          username: ${{ secrets.USERNAME }}
+          key: ${{ secrets.SSH_KEY }}
+          script: |
+            cd /root/burt-bot
+            cp .env.example .env
+            sed -i "s/DISCORD_TOKEN=.*/DISCORD_TOKEN=${{ secrets.DISCORD_TOKEN }}/" .env
+            sed -i "s/GUILD_ID=.*/GUILD_ID=${{ secrets.GUILD_ID }}/" .env
+            sed -i "s/CLIENT_ID=.*/CLIENT_ID=${{ secrets.CLIENT_ID }}/" .env
+            echo "XAI_API_KEY=${{ secrets.XAI_API_KEY }}" >> .env
+            npm install
+            pm2 restart burt-bot
