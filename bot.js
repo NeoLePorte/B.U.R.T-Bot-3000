@@ -1,4 +1,4 @@
-const { Client, GatewayIntentBits, EmbedBuilder, ActionRowBuilder, ButtonBuilder, ButtonStyle } = require('discord.js');
+const { Client, GatewayIntentBits, EmbedBuilder, ActionRowBuilder, ButtonBuilder, ButtonStyle, MessageMentions } = require('discord.js');
 require('dotenv').config();
 const OpenAI = require("openai");
 
@@ -756,3 +756,99 @@ client.on('error', error => {
 
 // Login
 client.login(process.env.DISCORD_TOKEN); 
+
+// Add message event handler
+client.on('messageCreate', async message => {
+  // Ignore messages from bots (including self)
+  if (message.author.bot) return;
+
+  // Check if bot is mentioned
+  if (message.mentions.has(client.user)) {
+    // Get the user's message without the mention
+    const question = message.content.replace(/<@!?(\d+)>/g, '').trim();
+    
+    // Check cooldown
+    const userId = message.author.id;
+    const cooldownEnd = userCooldowns.get(userId);
+    
+    if (cooldownEnd && Date.now() < cooldownEnd) {
+      const remainingTime = Math.ceil((cooldownEnd - Date.now()) / 1000);
+      await message.reply({ 
+        content: `*[BURT twitches nervously]* The voices say we need to wait ${remainingTime} more seconds... They're very insistent about it!`,
+      });
+      return;
+    }
+    
+    userCooldowns.set(userId, Date.now() + COOLDOWN_DURATION);
+
+    try {
+      // Show typing indicator while processing
+      await message.channel.sendTyping();
+
+      const completion = await openai.chat.completions.create({
+        model: "grok-beta",
+        messages: [
+          { role: "system", content: BURT_PROMPT },
+          { role: "user", content: question }
+        ],
+        max_tokens: 500,
+        temperature: 0.9,
+        presence_penalty: 0.6,
+        frequency_penalty: 0.4
+      });
+
+      let response = completion.choices[0].message.content;
+      
+      // Clean up truncated responses
+      if (response.length === 500) {
+        const lastPeriod = response.lastIndexOf('.');
+        const lastExclamation = response.lastIndexOf('!');
+        const lastQuestion = response.lastIndexOf('?');
+        
+        const lastSentenceEnd = Math.max(lastPeriod, lastExclamation, lastQuestion);
+        
+        if (lastSentenceEnd > 0) {
+          response = response.substring(0, lastSentenceEnd + 1);
+        }
+        
+        response += ' [*BURT gets distracted by a shiny object*]';
+      }
+
+      console.log(`BURT's response to mention: ${response}`);
+
+      const embed = new EmbedBuilder()
+        .setTitle('🤪 BURT Speaks! 🎭')
+        .setDescription(response)
+        .setColor('#FF69B4')
+        .setFooter({ 
+          text: `Responding to ${message.author.username} [Yes, they seem nice... NO, I won't share the secret!]` 
+        })
+        .setTimestamp();
+
+      if (Math.random() > 0.7) {
+        embed.addFields({
+          name: '💭 Random BURT Thought',
+          value: '*[mumbles something about fish tanks and cosmic significance]*'
+        });
+      }
+
+      await message.reply({ embeds: [embed] });
+
+    } catch (error) {
+      console.error('Error in mention response:', error);
+      
+      let errorMessage = '*[BURT stares intensely at a wall]*';
+      
+      if (error.status === 401) {
+        errorMessage += ' The voices say something about invalid credentials...';
+      } else if (error.status === 429) {
+        errorMessage += ' TOO MANY VOICES AT ONCE! We need to wait a bit...';
+      } else if (error.status === 500) {
+        errorMessage += ' The cosmic signals are distorted right now...';
+      }
+      
+      await message.reply(errorMessage)
+        .catch(() => console.error('Failed to send error message'));
+    }
+  }
+}); 
