@@ -628,15 +628,15 @@ client.on('interactionCreate', async interaction => {
           console.log('\nInitial Response:', response);
 
           // Handle any tool calls
-          while (response.tool_calls) {
-            console.log('\n=== Tool Calls Detected ===');
+          if (response.tool_calls) {
+            console.log('\n=== Processing Tool Calls ===');
             const toolResults = await Promise.all(
               response.tool_calls.map(async toolCall => {
-                console.log(`\nExecuting Tool: ${toolCall.function.name}`);
+                console.log(`\nTool: ${toolCall.function.name}`);
                 console.log(`Arguments: ${toolCall.function.arguments}`);
                 
                 const result = await executeToolCall(toolCall, message, client);
-                console.log('Tool Result:', result);
+                console.log('Result:', JSON.stringify(result, null, 2));
                 
                 return {
                   tool_call_id: toolCall.id,
@@ -646,22 +646,29 @@ client.on('interactionCreate', async interaction => {
               })
             );
 
-            // Get next completion
+            // Get follow-up completion with tool results
             console.log('\nRequesting follow-up completion with tool results...');
             const nextCompletion = await openai.chat.completions.create({
               model: "grok-beta",
               messages: [
-                { role: "system", content: BURT_PROMPT },
-                { role: "user", content: question },
+                { 
+                  role: "system", 
+                  content: BURT_PROMPT 
+                },
+                { 
+                  role: "user", 
+                  content: question 
+                },
                 response,
                 ...toolResults
               ],
+              max_tokens: 1000,
               tools: discordTools,
               tool_choice: "auto"
             });
 
             response = nextCompletion.choices[0].message;
-            console.log('\nFollow-up Response:', response);
+            console.log('\nFollow-up Response:', response.content);
           }
 
           // Send final response
