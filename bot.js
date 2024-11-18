@@ -765,14 +765,39 @@ client.login(process.env.DISCORD_TOKEN);
 
 // Add message event handler
 client.on('messageCreate', async message => {
-  // Ignore messages from bots (including self)
   if (message.author.bot) return;
 
-  // Check if bot is mentioned
   if (message.mentions.has(client.user)) {
-    // Get the user's message without the mention
     const question = message.content.replace(/<@!?(\d+)>/g, '').trim();
     
+    // Build context object
+    const context = {
+      channel: {
+        name: message.channel.name,
+        type: message.channel.type,
+        isNSFW: message.channel.nsfw
+      },
+      author: await getDiscordUserInfo(client, message.author.id),
+      mentionedUsers: await Promise.all(
+        message.mentions.users.map(user => getDiscordUserInfo(client, user.id))
+      ),
+      guild: message.guild ? {
+        name: message.guild.name,
+        memberCount: message.guild.memberCount,
+      } : null
+    };
+
+    // Add context to the Grok prompt
+    const contextualPrompt = `
+      ${BURT_PROMPT}
+      
+      Current Discord Context:
+      - Channel: #${context.channel.name}
+      - Server: ${context.guild?.name || 'DM'}
+      - Speaking to: ${context.author.username}
+      ${context.mentionedUsers.length > 1 ? `- Other mentioned users: ${context.mentionedUsers.filter(u => u.id !== client.user.id).map(u => u.username).join(', ')}` : ''}
+    `;
+
     // Check cooldown
     const userId = message.author.id;
     const cooldownEnd = userCooldowns.get(userId);
@@ -794,8 +819,11 @@ client.on('messageCreate', async message => {
       const completion = await openai.chat.completions.create({
         model: "grok-beta",
         messages: [
-          { role: "system", content: BURT_PROMPT },
-          { role: "user", content: question }
+          { role: "system", content: contextualPrompt },
+          { 
+            role: "user", 
+            content: `Context: ${JSON.stringify(context, null, 2)}\n\nQuestion: ${question}`
+          }
         ],
         max_tokens: 500,
         temperature: 0.9,
@@ -858,3 +886,19 @@ client.on('messageCreate', async message => {
     }
   }
 }); 
+
+// Add this near the top with other helper functions
+async function getDiscordUserInfo(client, userId) {
+  try {
+    const user = await client.users.fetch(userId);
+    return {
+      username: user.username,
+      joinedAt: user.createdAt,
+      isBot: user.bot,
+      avatarURL: user.displayAvatarURL(),
+    };
+  } catch (error) {
+    console.error('Error fetching user info:', error);
+    return null;
+  }
+} 
