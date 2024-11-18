@@ -909,14 +909,14 @@ function getUserIdFromMention(mention) {
   return matches ? matches[1] : null;
 }
 
-// Update the message handling to extract mentioned users
+// Update the messageCreate handler around lines 913-996
 client.on('messageCreate', async message => {
   if (message.author.bot) return;
 
   if (message.mentions.has(client.user)) {
     const loadingMessage = await message.reply('*[BURT twitches and starts thinking...]* 🤪');
     
-    // Extract all mentioned users except the bot itself
+    // Extract mentioned users
     const mentionedUsers = message.mentions.users
       .filter(user => user.id !== client.user.id)
       .map(user => ({
@@ -924,7 +924,6 @@ client.on('messageCreate', async message => {
         username: user.username
       }));
     
-    // Add this context to the question
     const question = message.content.replace(/<@!?(\d+)>/g, '').trim();
     const contextualQuestion = mentionedUsers.length > 0 
       ? `[Context: This message mentions users: ${JSON.stringify(mentionedUsers)}]\n\n${question}`
@@ -943,7 +942,7 @@ client.on('messageCreate', async message => {
         messages: [
           { 
             role: "system", 
-            content: BURT_PROMPT + "\nIMPORTANT: Keep responses under 4000 characters." 
+            content: BURT_PROMPT 
           },
           { role: "user", content: contextualQuestion }
         ],
@@ -954,10 +953,10 @@ client.on('messageCreate', async message => {
 
       let response = completion.choices[0].message;
       console.log('\n=== Initial Response ===');
-      console.log('Content:', response.content?.substring(0, 500) + '...');
       console.log('Tool Calls:', response.tool_calls ? response.tool_calls.length : 'None');
 
-      // Handle any tool calls
+      // Handle tool calls first
+      let toolResults = [];
       if (response.tool_calls) {
         console.log('\n=== Processing Tool Calls ===');
         for (const toolCall of response.tool_calls) {
@@ -966,10 +965,30 @@ client.on('messageCreate', async message => {
           try {
             const result = await executeToolCall(toolCall, message, client);
             console.log('Result:', JSON.stringify(result, null, 2));
+            toolResults.push({
+              tool_call_id: toolCall.id,
+              role: "tool",
+              content: JSON.stringify(result)
+            });
           } catch (error) {
             console.error(`Tool execution failed:`, error);
           }
         }
+
+        // Get final response with tool results
+        console.log('\n=== Getting Final Response with Tool Results ===');
+        const finalCompletion = await openai.chat.completions.create({
+          model: "grok-beta",
+          messages: [
+            { role: "system", content: BURT_PROMPT },
+            { role: "user", content: contextualQuestion },
+            response,
+            ...toolResults
+          ],
+          max_tokens: 1000
+        });
+        
+        response = finalCompletion.choices[0].message;
       }
 
       // Send final response
@@ -991,10 +1010,10 @@ client.on('messageCreate', async message => {
 
     } catch (error) {
       console.error('Error processing message:', error);
-      await message.reply('*[BURT stares at the wall in confusion]*');
+      await loadingMessage.edit('*[BURT stares at the wall in confusion]*');
     }
   }
-}); 
+});
 
 // Add this near the top with other helper functions
 async function getDiscordUserInfo(client, userId) {
