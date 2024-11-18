@@ -54,31 +54,34 @@ client.on('interactionCreate', async interaction => {
   const { commandName, options } = interaction;
 
   if (commandName === 'images') {
-    const amount = Math.min(options.getInteger('amount') || 100, 100);
-    console.log(`User requested ${amount} messages`);
-
     try {
       await interaction.deferReply({ ephemeral: true });
 
-      // Get initial batch of messages
+      // Calculate timestamp for 24 hours ago
+      const oneDayAgo = Date.now() - (24 * 60 * 60 * 1000);
       let allMessages = [];
       let lastId = null;
       
-      // Fetch messages in batches until we have enough
-      while (allMessages.length < amount) {
-        const options = { limit: Math.min(100, amount - allMessages.length) };
-        if (lastId) options.before = lastId;
+      while (true) {
+        const fetchOptions = { limit: 100 };
+        if (lastId) fetchOptions.before = lastId;
         
-        const messages = await interaction.channel.messages.fetch(options);
-        if (messages.size === 0) break; // No more messages to fetch
+        const messages = await interaction.channel.messages.fetch(fetchOptions);
+        console.log(`Fetched batch of ${messages.size} messages`);
         
-        allMessages = allMessages.concat(Array.from(messages.values()));
+        if (messages.size === 0) break;
+        
+        // Filter messages within last 24 hours
+        const recentMessages = Array.from(messages.values()).filter(msg => msg.createdTimestamp > oneDayAgo);
+        if (recentMessages.length === 0) break; // Stop if we've gone past 24 hours
+        
+        allMessages = allMessages.concat(recentMessages);
         lastId = messages.last().id;
         
-        console.log(`Fetched batch of ${messages.size} messages, total: ${allMessages.length}`);
+        console.log(`Batch time range: ${messages.first()?.createdAt} to ${messages.last()?.createdAt}`);
       }
 
-      console.log(`Total messages fetched: ${allMessages.length}`);
+      console.log(`Total messages fetched from last 24 hours: ${allMessages.length}`);
 
       // Process images as before, but use allMessages instead of messages
       const imageMessages = allMessages.filter(msg => msg.attachments.some(attachment => {
