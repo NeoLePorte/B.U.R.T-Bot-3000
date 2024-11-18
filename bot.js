@@ -173,7 +173,7 @@ function createGalleryMessage(galleryData) {
     .setTitle(`Image Gallery (${galleryData.currentIndex + 1}/${galleryData.images.length}${galleryData.loading ? '+' : ''})`)
     .setImage(currentImage.url)
     .setFooter({ 
-      text: `Posted by ${currentImage.author} • Click title to view original message${galleryData.loading ? ' • Loading more images...' : ''}`
+      text: `Posted by ${currentImage.author} ��� Click title to view original message${galleryData.loading ? ' • Loading more images...' : ''}`
     })
     .setURL(currentImage.messageLink)
     .setTimestamp(currentImage.timestamp);
@@ -919,39 +919,39 @@ async function executeToolCall(toolCall, message, client) {
         return await getChannelInfo(message.channel);
       case 'searchTweets':
         const searchParams = {
-          query: '#fishtanklive',
-          max_results: parsedArgs.limit || 10,
-          sort_order: parsedArgs.sort_order || 'recency',
-          tweet_fields: [
+          'query': '#fishtanklive',
+          'max_results': parsedArgs.limit || 10,
+          'tweet.fields': [
             'created_at',
             'public_metrics',
             'entities',
             'context_annotations'
           ].join(','),
-          expansions: [
+          'expansions': [
             'author_id',
-            'referenced_tweets.id',
-            'attachments.media_keys'
-          ].join(','),
-          media_fields: [
-            'url',
-            'preview_image_url',
-            'type'
+            'referenced_tweets.id'
           ].join(',')
         };
 
         try {
+          // Decode the Bearer Token before using it
+          const decodedToken = decodeURIComponent(process.env.TWITTER_BEARER_TOKEN);
+          
           const response = await fetch(
-            `https://api.x.com/2/tweets/search/recent?${new URLSearchParams(searchParams)}`,
+            `https://api.twitter.com/2/tweets/search/recent?${new URLSearchParams(searchParams)}`,
             {
+              method: 'GET',
               headers: {
-                'Authorization': `Bearer ${process.env.TWITTER_BEARER_TOKEN}`
+                'Authorization': `Bearer ${decodedToken}`,
+                'Content-Type': 'application/json'
               }
             }
           );
 
           if (!response.ok) {
-            throw new Error(`Twitter API error: ${response.status}`);
+            const errorData = await response.json();
+            console.error('Twitter API detailed error:', errorData);
+            throw new Error(`Twitter API error: ${response.status} - ${JSON.stringify(errorData)}`);
           }
 
           const data = await response.json();
