@@ -55,6 +55,6 @@ jobs:
             echo "DISCORD_TOKEN=${{ secrets.DISCORD_TOKEN }}" > .env && \
             echo "XAI_API_KEY=${{ secrets.XAI_API_KEY }}" >> .env && \
             npm install && \
-            pm2 restart burt-bot || pm2 start index.js --name burt-bot && \
+            pm2 restart burt-bot || pm2 start bot.js --name burt-bot && \
             pm2 save
           '
