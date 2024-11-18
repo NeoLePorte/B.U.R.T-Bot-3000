@@ -886,12 +886,16 @@ client.on('messageCreate', async message => {
       // Send final response
       const embed = new EmbedBuilder()
         .setTitle('🤪 BURT Speaks! 🎭')
-        .setDescription(response.content)
+        .setDescription(response.content || 'No response')
         .setColor('#FF69B4')
         .setFooter({ 
           text: `Responding to ${message.author.username} [Yes, they seem nice... NO, I won't share the secret!]` 
         })
         .setTimestamp();
+
+      if (embed.data.description.length > 4096) {
+        embed.setDescription(truncateResponse(embed.data.description, 4096));
+      }
 
       await message.reply({ embeds: [embed] });
 
