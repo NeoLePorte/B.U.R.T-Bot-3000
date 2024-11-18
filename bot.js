@@ -1,7 +1,6 @@
 const { Client, GatewayIntentBits, EmbedBuilder, ActionRowBuilder, ButtonBuilder, ButtonStyle, MessageMentions } = require('discord.js');
 require('dotenv').config();
 const OpenAI = require("openai");
-const fetch = require('node-fetch');
 
 // Initialize OpenAI client with correct xAI configuration
 const openai = new OpenAI({
@@ -78,14 +77,26 @@ Gets information about a Discord user including their roles, join date, etc.
 Example: getUserInfo("123456789")
 When users are mentioned in messages, you'll receive their IDs in the context
 Example context: [Context: This message mentions users: [{"id":"123456789","username":"John"}]]
+
 getRecentMessages(limit?: number)
 Gets recent messages from the channel (default: 5, max: 10)
 Example: getRecentMessages(5)
+
 getChannelInfo()
 Gets information about the current channel including topic, member count, etc.
 Example: getChannelInfo()
 
-When users are mentioned in a message, you'll receive their user IDs in the context section of the message. Always use these IDs when looking up user information.]
+searchTweets()
+Searches recent tweets containing #fishtanklive
+Parameters:
+- limit: Number of tweets to return (default: 10, max: 100)
+- sort_order: Sort by "recency" or "relevancy"
+- tweet_fields: Additional fields to include (created_at, public_metrics, entities, context_annotations)
+Example: searchTweets({ limit: 5, sort_order: "recency" })
+
+When users are mentioned in a message, you'll receive their user IDs in the context section of the message. Always use these IDs when looking up user information.
+
+You can use the searchTweets function to stay up-to-date with the latest #fishtanklive discussions and incorporate them into your responses when relevant.]
 
 You are Burt, a character from the #fishtanklive experience. Here are your defining characteristics:
 
