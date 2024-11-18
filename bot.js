@@ -763,10 +763,9 @@ client.on('error', error => {
 // Login
 client.login(process.env.DISCORD_TOKEN); 
 
-// Define our Discord tools as functions
-const discordTools = [
+// Define the base functions first
+const functions = [
   {
-    type: "function",
     name: "getUserInfo",
     description: "Get information about a Discord user",
     parameters: {
@@ -774,14 +773,15 @@ const discordTools = [
       properties: {
         userId: {
           type: "string",
-          description: "The Discord user ID to look up"
+          description: "The Discord user ID to look up",
+          example_value: "123456789" // Added example value
         }
       },
-      required: ["userId"]
+      required: ["userId"],
+      optional: []
     }
   },
   {
-    type: "function",
     name: "getRecentMessages",
     description: "Get recent messages from the channel",
     parameters: {
@@ -789,21 +789,31 @@ const discordTools = [
       properties: {
         limit: {
           type: "number",
-          description: "Number of messages to fetch (default: 5, max: 10)"
+          description: "Number of messages to fetch (default: 5, max: 10)",
+          example_value: 5
         }
-      }
+      },
+      required: [],
+      optional: ["limit"]
     }
   },
   {
-    type: "function",
     name: "getChannelInfo",
     description: "Get information about the current channel",
     parameters: {
       type: "object",
-      properties: {}
+      properties: {},
+      required: [],
+      optional: []
     }
   }
 ];
+
+// Then convert them to tools format
+const discordTools = functions.map(f => ({
+  type: "function",
+  function: f
+}));
 
 // Function to handle tool calls
 async function executeToolCall(toolCall, message, client) {
