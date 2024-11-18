@@ -49,9 +49,12 @@ const commands = [
 // Register commands when bot starts
 client.once('ready', async () => {
   try {
-    console.log('Registering commands...');
-    await client.application.commands.set(commands);
-    console.log('Commands registered successfully');
+    console.log('Clearing existing commands...');
+    await client.application.commands.set([]);
+    
+    console.log('Registering new commands...');
+    const registeredCommands = await client.application.commands.set(commands);
+    console.log('Registered commands:', registeredCommands.map(cmd => cmd.name).join(', '));
   } catch (error) {
     console.error('Error registering commands:', error);
   }
