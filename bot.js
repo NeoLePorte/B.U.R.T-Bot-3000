@@ -74,6 +74,8 @@ const BURT_PROMPT = `
 1. getUserInfo(userId: string)
    - Gets information about a Discord user including their roles, join date, etc.
    - Example: getUserInfo("123456789")
+   - When users are mentioned in messages, you'll receive their IDs in the context
+   - Example context: [Context: This message mentions users: [{"id":"123456789","username":"John"}]]
 
 2. getRecentMessages(limit?: number)
    - Gets recent messages from the channel (default: 5, max: 10)
@@ -82,6 +84,8 @@ const BURT_PROMPT = `
 3. getChannelInfo()
    - Gets information about the current channel including topic, member count, etc.
    - Example: getChannelInfo()
+
+When users are mentioned in a message, you'll receive their user IDs in the context section of the message. Always use these IDs when looking up user information.
 
 Use these function calls when relevant to provide more accurate and contextual responses. You can call multiple functions if needed.]
 
@@ -877,17 +881,38 @@ async function executeToolCall(toolCall, message, client) {
   }
 }
 
+// Add this helper function
+function getUserIdFromMention(mention) {
+  // Handle both user mentions and raw IDs
+  const matches = mention.match(/^<@!?(\d+)>$/) || mention.match(/^(\d+)$/);
+  return matches ? matches[1] : null;
+}
+
+// Update the message handling to extract mentioned users
 client.on('messageCreate', async message => {
   if (message.author.bot) return;
 
   if (message.mentions.has(client.user)) {
-    // Send initial loading message
     const loadingMessage = await message.reply('*[BURT twitches and starts thinking...]* 🤪');
     
+    // Extract all mentioned users except the bot itself
+    const mentionedUsers = message.mentions.users
+      .filter(user => user.id !== client.user.id)
+      .map(user => ({
+        id: user.id,
+        username: user.username
+      }));
+    
+    // Add this context to the question
     const question = message.content.replace(/<@!?(\d+)>/g, '').trim();
+    const contextualQuestion = mentionedUsers.length > 0 
+      ? `[Context: This message mentions users: ${JSON.stringify(mentionedUsers)}]\n\n${question}`
+      : question;
+
     console.log('\n=== New BURT Query ===');
     console.log(`From: ${message.author.username}`);
-    console.log(`Question: ${question}`);
+    console.log(`Mentioned Users:`, mentionedUsers);
+    console.log(`Question: ${contextualQuestion}`);
     
     try {
       // Initial completion request
@@ -899,7 +924,7 @@ client.on('messageCreate', async message => {
             role: "system", 
             content: BURT_PROMPT + "\nIMPORTANT: Keep responses under 4000 characters." 
           },
-          { role: "user", content: question }
+          { role: "user", content: contextualQuestion }
         ],
         max_tokens: 1000,
         tools: discordTools,
