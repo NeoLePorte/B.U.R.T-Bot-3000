@@ -589,39 +589,70 @@ client.on('interactionCreate', async interaction => {
             messages: [
               { 
                 role: "system", 
-                content: BURT_PROMPT + "\nKeep responses under 2000 characters for Discord compatibility." 
+                content: BURT_PROMPT + "\nIMPORTANT: Keep responses under 4000 characters for Discord compatibility." 
               },
               { 
                 role: "user", 
                 content: question 
               }
             ],
-            max_tokens: 500,
-            temperature: 0.9,
-            presence_penalty: 0.6,
-            frequency_penalty: 0.4,
-            tools: discordTools
+            max_tokens: 1000, // Limit token output
+            tools: discordTools,
+            tool_choice: "auto"
           });
 
           let response = completion.choices[0].message.content;
-          response = truncateResponse(response); // Ensure it fits in Discord embed
+          console.log('\nInitial Response:', response);
 
-          console.log(`BURT's response: ${response}`);
+          // Handle any tool calls
+          while (response.tool_calls) {
+            console.log('\n=== Tool Calls Detected ===');
+            const toolResults = await Promise.all(
+              response.tool_calls.map(async toolCall => {
+                console.log(`\nExecuting Tool: ${toolCall.function.name}`);
+                console.log(`Arguments: ${toolCall.function.arguments}`);
+                
+                const result = await executeToolCall(toolCall, message, client);
+                console.log('Tool Result:', result);
+                
+                return {
+                  tool_call_id: toolCall.id,
+                  role: "tool",
+                  content: JSON.stringify(result)
+                };
+              })
+            );
 
+            // Get next completion
+            console.log('\nRequesting follow-up completion with tool results...');
+            const nextCompletion = await openai.chat.completions.create({
+              model: "grok-beta",
+              messages: [
+                { role: "system", content: BURT_PROMPT },
+                { role: "user", content: question },
+                response,
+                ...toolResults
+              ],
+              tools: discordTools,
+              tool_choice: "auto"
+            });
+
+            response = nextCompletion.choices[0].message;
+            console.log('\nFollow-up Response:', response);
+          }
+
+          // Send final response
           const embed = new EmbedBuilder()
             .setTitle('🤪 BURT Speaks! 🎭')
-            .setDescription(response)
+            .setDescription(sanitizeResponse(response.content))
             .setColor('#FF69B4')
             .setFooter({ 
-              text: `Asked by ${interaction.user.username} [Yes, they seem nice... NO, I won't share the secret!]` 
+              text: `Responding to ${interaction.user.username} [Yes, they seem nice... NO, I won't share the secret!]` 
             })
             .setTimestamp();
 
-          if (Math.random() > 0.7) {
-            embed.addFields({
-              name: '💭 Random BURT Thought',
-              value: '*[mumbles something about fish tanks and cosmic significance]*'
-            });
+          if (embed.data.description.length > 4096) {
+            embed.setDescription(truncateResponse(embed.data.description, 4096));
           }
 
           await interaction.editReply({ 
@@ -826,33 +857,40 @@ client.on('messageCreate', async message => {
   if (message.author.bot) return;
 
   if (message.mentions.has(client.user)) {
+    // Send initial loading message
+    const loadingMessage = await message.reply('*[BURT twitches and starts thinking...]* 🤪');
+    
     const question = message.content.replace(/<@!?(\d+)>/g, '').trim();
+    console.log('\n=== New BURT Query ===');
+    console.log(`From: ${message.author.username}`);
+    console.log(`Question: ${question}`);
     
     try {
       // Initial completion request
       const completion = await openai.chat.completions.create({
         model: "grok-beta",
         messages: [
-          { 
-            role: "system", 
-            content: BURT_PROMPT + "\nYou have access to Discord tools to get more information when needed." 
-          },
-          { 
-            role: "user", 
-            content: question 
-          }
+          { role: "system", content: BURT_PROMPT },
+          { role: "user", content: question }
         ],
         tools: discordTools,
         tool_choice: "auto"
       });
 
       let response = completion.choices[0].message;
+      console.log('\nInitial Response:', response);
 
       // Handle any tool calls
       while (response.tool_calls) {
+        console.log('\n=== Tool Calls Detected ===');
         const toolResults = await Promise.all(
           response.tool_calls.map(async toolCall => {
+            console.log(`\nExecuting Tool: ${toolCall.function.name}`);
+            console.log(`Arguments: ${toolCall.function.arguments}`);
+            
             const result = await executeToolCall(toolCall, message, client);
+            console.log('Tool Result:', result);
+            
             return {
               tool_call_id: toolCall.id,
               role: "tool",
@@ -861,18 +899,13 @@ client.on('messageCreate', async message => {
           })
         );
 
-        // Get next completion with tool results
+        // Get next completion
+        console.log('\nRequesting follow-up completion with tool results...');
         const nextCompletion = await openai.chat.completions.create({
           model: "grok-beta",
           messages: [
-            { 
-              role: "system", 
-              content: BURT_PROMPT 
-            },
-            { 
-              role: "user", 
-              content: question 
-            },
+            { role: "system", content: BURT_PROMPT },
+            { role: "user", content: question },
             response,
             ...toolResults
           ],
@@ -881,12 +914,13 @@ client.on('messageCreate', async message => {
         });
 
         response = nextCompletion.choices[0].message;
+        console.log('\nFollow-up Response:', response);
       }
 
       // Send final response
       const embed = new EmbedBuilder()
         .setTitle('🤪 BURT Speaks! 🎭')
-        .setDescription(response.content || 'No response')
+        .setDescription(sanitizeResponse(response.content))
         .setColor('#FF69B4')
         .setFooter({ 
           text: `Responding to ${message.author.username} [Yes, they seem nice... NO, I won't share the secret!]` 
@@ -897,7 +931,7 @@ client.on('messageCreate', async message => {
         embed.setDescription(truncateResponse(embed.data.description, 4096));
       }
 
-      await message.reply({ embeds: [embed] });
+      await loadingMessage.edit({ content: null, embeds: [embed] });
 
     } catch (error) {
       console.error('Error processing message:', error);
@@ -1001,4 +1035,19 @@ function truncateResponse(response, maxLength = 4000) {
   return lastSentenceEnd > -1
     ? truncated.substring(0, lastSentenceEnd + 1) + '\n\n*[BURT\'s rambling fades into cosmic static...]*'
     : truncated + '\n\n*[BURT\'s rambling fades into cosmic static...]*';
+}
+
+// Add this constant at the top with other constants
+const MAX_EMBED_LENGTH = 4000; // Safe limit for Discord embeds
+
+// Add this helper function
+function sanitizeResponse(content) {
+  if (!content) return 'No response';
+  
+  // Truncate to safe limit
+  if (content.length > MAX_EMBED_LENGTH) {
+    return content.substring(0, MAX_EMBED_LENGTH - 100) + 
+      '\n\n*[BURT\'s rambling fades into cosmic static...]*';
+  }
+  return content;
 }
