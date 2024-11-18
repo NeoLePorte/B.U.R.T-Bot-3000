@@ -55,25 +55,30 @@ client.on('interactionCreate', async interaction => {
 
   if (commandName === 'images') {
     const amount = Math.min(options.getInteger('amount') || 100, 100);
+    console.log(`Attempting to fetch ${amount} messages`);
 
     try {
       await interaction.deferReply({ ephemeral: true });
 
-      // Fetch messages
+      // Add logging to verify message fetch
       const messages = await interaction.channel.messages.fetch({ limit: amount });
+      console.log(`Fetched ${messages.size} messages`);
       
-      // Filter for messages with images
+      // Add logging for images found
       const imageMessages = Array.from(messages.values())
         .filter(msg => msg.attachments.some(attachment => {
           // Check for common image extensions if contentType is not available
           const url = attachment.url.toLowerCase();
-          return attachment.contentType?.startsWith('image/') || 
+          const isImage = attachment.contentType?.startsWith('image/') || 
                  url.endsWith('.jpg') || 
                  url.endsWith('.jpeg') || 
                  url.endsWith('.png') || 
                  url.endsWith('.gif') ||
                  url.endsWith('.webp');
+          return isImage;
         }));
+      
+      console.log(`Found ${imageMessages.length} messages with images`);
 
       if (imageMessages.length === 0) {
         await interaction.editReply('No images found in the recent messages!');
