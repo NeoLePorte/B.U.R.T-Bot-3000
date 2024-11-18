@@ -607,27 +607,39 @@ client.on('interactionCreate', async interaction => {
 
           console.log(`Processing question from ${interaction.user.username}: ${question}`);
 
+          // Extract mentioned users from the question
+          const mentionedUsers = Array.from(question.matchAll(/<@!?(\d+)>/g))
+            .map(match => ({
+              id: match[1],
+              mention: match[0]
+            }));
+
+          console.log('Mentioned Users:', mentionedUsers);
+
+          // Initial completion request
+          console.log('\n=== Initial Completion Request ===');
           const completion = await openai.chat.completions.create({
             model: "grok-beta",
             messages: [
               { 
                 role: "system", 
-                content: BURT_PROMPT + "\nIMPORTANT: Keep responses under 4000 characters for Discord compatibility." 
+                content: BURT_PROMPT + "\nIMPORTANT: Keep responses under 4000 characters." 
               },
               { 
                 role: "user", 
                 content: question 
               }
             ],
-            max_tokens: 1000, // Limit token output
+            max_tokens: 1000,
             tools: discordTools,
             tool_choice: "auto"
           });
 
-          let response = completion.choices[0].message.content;
-          console.log('\nInitial Response:', response);
+          let response = completion.choices[0].message;
+          console.log('\nInitial Response:', JSON.stringify(response, null, 2));
 
-          // Handle any tool calls
+          // Handle tool calls
+          let finalResponse = response;
           if (response.tool_calls) {
             console.log('\n=== Processing Tool Calls ===');
             const toolResults = await Promise.all(
@@ -635,8 +647,8 @@ client.on('interactionCreate', async interaction => {
                 console.log(`\nTool: ${toolCall.function.name}`);
                 console.log(`Arguments: ${toolCall.function.arguments}`);
                 
-                const result = await executeToolCall(toolCall, message, client);
-                console.log('Result:', JSON.stringify(result, null, 2));
+                const result = await executeToolCall(toolCall, interaction, client);
+                console.log('Tool Result:', JSON.stringify(result, null, 2));
                 
                 return {
                   tool_call_id: toolCall.id,
@@ -647,35 +659,38 @@ client.on('interactionCreate', async interaction => {
             );
 
             // Get follow-up completion with tool results
-            console.log('\nRequesting follow-up completion with tool results...');
+            console.log('\n=== Getting Final Response with Tool Results ===');
+            const messages = [
+              { 
+                role: "system", 
+                content: BURT_PROMPT 
+              },
+              { 
+                role: "user", 
+                content: question 
+              },
+              response,
+              ...toolResults
+            ];
+            
+            console.log('Messages for final completion:', JSON.stringify(messages, null, 2));
+            
             const nextCompletion = await openai.chat.completions.create({
               model: "grok-beta",
-              messages: [
-                { 
-                  role: "system", 
-                  content: BURT_PROMPT 
-                },
-                { 
-                  role: "user", 
-                  content: question 
-                },
-                response,
-                ...toolResults
-              ],
-              max_tokens: 1000,
-              tools: discordTools,
-              tool_choice: "auto"
+              messages: messages,
+              max_tokens: 1000
             });
 
-            response = nextCompletion.choices[0].message;
-            console.log('\nFollow-up Response:', response.content);
+            finalResponse = nextCompletion.choices[0].message;
+            console.log('\nFinal Response:', JSON.stringify(finalResponse, null, 2));
           }
 
           // Send final response
-          const sanitizedContent = sanitizeResponse(response.content || 'No response');
+          const sanitizedContent = sanitizeResponse(finalResponse.content || 'No response');
           console.log('\n=== Final Response Length ===');
-          console.log(`Original: ${response.content?.length || 0}`);
+          console.log(`Original: ${finalResponse.content?.length || 0}`);
           console.log(`Sanitized: ${sanitizedContent.length}`);
+          console.log('Content:', sanitizedContent);
 
           const embed = new EmbedBuilder()
             .setTitle('🤪 BURT Speaks! 🎭')
@@ -686,10 +701,6 @@ client.on('interactionCreate', async interaction => {
             })
             .setTimestamp();
 
-          if (embed.data.description.length > 4096) {
-            embed.setDescription(truncateResponse(embed.data.description, 4096));
-          }
-
           await interaction.editReply({ 
             embeds: [embed],
             ephemeral: true
@@ -697,24 +708,10 @@ client.on('interactionCreate', async interaction => {
 
         } catch (error) {
           console.error('Error in ask command:', error);
-          
-          let errorMessage = '*[BURT stares intensely at a wall]*';
-          
-          if (error.status === 401) {
-            console.error('Authentication error - check XAI_API_KEY');
-            errorMessage += ' The voices say something about invalid credentials...';
-          } else if (error.status === 429) {
-            console.error('Rate limit exceeded');
-            errorMessage += ' TOO MANY VOICES AT ONCE! We need to wait a bit...';
-          } else if (error.status === 500) {
-            console.error('xAI API server error');
-            errorMessage += ' The cosmic signals are distorted right now...';
-          }
-          
           await interaction.editReply({ 
-            content: errorMessage,
+            content: '*[BURT stares intensely at a wall]*',
             ephemeral: true
-          }).catch(() => console.error('Failed to send error message'));
+          });
         }
         break;
     }
