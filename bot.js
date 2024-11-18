@@ -292,14 +292,14 @@ client.on('interactionCreate', async interaction => {
       console.time('tweetFetch');
       
       const MAX_TWEETS = 50;
-      const FETCH_TIMEOUT = 15000; // 15 seconds
+      const FETCH_TIMEOUT = 15000;
       let tweets = [];
       let lastId = null;
 
-      // Regular expressions for X/Twitter URLs
+      // Regular expressions for X/Twitter URLs and images
       const tweetRegex = /(?:https?:\/\/)?(?:www\.)?(twitter\.com|x\.com)\/[a-zA-Z0-9_]+\/status\/[0-9]+/g;
+      const imageRegex = /https:\/\/pbs\.twimg\.com\/media\/[^\s]+/g;
 
-      // Tweet fetching function
       const fetchTweets = async () => {
         while (tweets.length < MAX_TWEETS) {
           const messages = await interaction.channel.messages.fetch({ 
@@ -312,16 +312,36 @@ client.on('interactionCreate', async interaction => {
 
           // Process messages for tweets
           for (const msg of messages.values()) {
-            const matches = msg.content.match(tweetRegex);
-            if (!matches) continue;
+            const tweetMatches = msg.content.match(tweetRegex);
+            if (!tweetMatches) continue;
 
-            for (const url of matches) {
+            // Look for tweet images in embeds or content
+            let tweetImage = null;
+            
+            // Check message embeds for images
+            if (msg.embeds.length > 0) {
+              const imageEmbed = msg.embeds.find(embed => embed.image);
+              if (imageEmbed && imageEmbed.image) {
+                tweetImage = imageEmbed.image.url;
+              }
+            }
+            
+            // If no embed image, try to find image URL in content
+            if (!tweetImage) {
+              const imageMatches = msg.content.match(imageRegex);
+              if (imageMatches) {
+                tweetImage = imageMatches[0];
+              }
+            }
+
+            for (const url of tweetMatches) {
               tweets.push({
                 url: url,
                 author: msg.author.username,
                 timestamp: msg.createdTimestamp,
                 messageLink: msg.url,
-                content: msg.content
+                content: msg.content,
+                image: tweetImage
               });
               if (tweets.length >= MAX_TWEETS) return;
             }
@@ -334,7 +354,6 @@ client.on('interactionCreate', async interaction => {
         setTimeout(() => resolve('timeout'), FETCH_TIMEOUT);
       });
 
-      // Race between fetch and timeout
       await Promise.race([fetchTweets(), timeoutPromise]);
       console.timeEnd('tweetFetch');
       
@@ -347,8 +366,7 @@ client.on('interactionCreate', async interaction => {
 
       // Create embed pages for tweets
       const embeds = tweets.map((tweet, index) => {
-        const tweetId = tweet.url.split('/').pop().split('?')[0];
-        return new EmbedBuilder()
+        const embed = new EmbedBuilder()
           .setTitle(`Tweet Links (${index + 1}/${tweets.length})`)
           .setDescription(`[View Tweet](${tweet.url})\n\nContext: ${tweet.content.substring(0, 200)}${tweet.content.length > 200 ? '...' : ''}`)
           .setFooter({ 
@@ -356,13 +374,14 @@ client.on('interactionCreate', async interaction => {
           })
           .setURL(tweet.messageLink)
           .setTimestamp(tweet.timestamp)
-          .setColor('#1DA1F2') // Twitter blue color
-          .addFields([
-            {
-              name: 'Direct Link',
-              value: `[Open in X/Twitter](${tweet.url})`
-            }
-          ]);
+          .setColor('#1DA1F2');
+
+        // Add the image if available
+        if (tweet.image) {
+          embed.setImage(tweet.image);
+        }
+
+        return embed;
       });
 
       // Create gallery data
