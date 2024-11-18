@@ -26,8 +26,8 @@ const commands = [
     options: [
       {
         name: 'amount',
-        description: 'Number of messages to check (default: 100, max: 100)',
-        type: 4, // INTEGER
+        description: 'Number of images to show (default: 100, max: 100)',
+        type: 4,
         required: false
       }
     ]
@@ -39,7 +39,7 @@ const commands = [
       {
         name: 'amount',
         description: 'Number of messages to check (default: 100, max: 100)',
-        type: 4, // INTEGER
+        type: 4,
         required: false
       }
     ]
@@ -48,14 +48,15 @@ const commands = [
 
 // Register commands when bot starts
 client.once('ready', async () => {
-  console.log(`Logged in as ${client.user.tag}`);
-  console.log(`Bot is in ${client.guilds.cache.size} servers`);
   try {
+    console.log('Registering commands...');
     await client.application.commands.set(commands);
     console.log('Commands registered successfully');
   } catch (error) {
     console.error('Error registering commands:', error);
   }
+  
+  console.log(`Logged in as ${client.user.tag}`);
 });
 
 // Helper function to process messages for images
