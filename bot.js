@@ -60,39 +60,45 @@ client.on('interactionCreate', async interaction => {
     try {
       await interaction.deferReply({ ephemeral: true });
 
-      // Add more detailed logging
-      console.log('Attempting to fetch messages...');
-      const messages = await interaction.channel.messages.fetch({ 
-        limit: amount,
-        cache: false  // Make sure we're not just getting cached messages
-      });
-      console.log(`Successfully fetched ${messages.size} messages`);
-      console.log(`First message timestamp: ${messages.first()?.createdAt}`);
-      console.log(`Last message timestamp: ${messages.last()?.createdAt}`);
-
-      // Add logging to verify message fetch
-      console.log(`Fetched ${messages.size} messages`);
+      // Get initial batch of messages
+      let allMessages = [];
+      let lastId = null;
       
-      // Add logging for images found
-      const imageMessages = Array.from(messages.values())
-        .filter(msg => msg.attachments.some(attachment => {
-          const url = attachment.url.toLowerCase();
-          const cleanUrl = url.split('?')[0];
-          const isImage = attachment.contentType?.startsWith('image/') || 
-                 cleanUrl.endsWith('.jpg') || 
-                 cleanUrl.endsWith('.jpeg') || 
-                 cleanUrl.endsWith('.png') || 
-                 cleanUrl.endsWith('.gif') ||
-                 cleanUrl.endsWith('.webp');
-          
-          // Debug logging
-          if (msg.attachments.size > 0) {
-            console.log(`Message ${msg.id} has ${msg.attachments.size} attachments`);
-            console.log(`URL: ${url} - Is Image: ${isImage}`);
-          }
-          
-          return isImage;
-        }));
+      // Fetch messages in batches until we have enough
+      while (allMessages.length < amount) {
+        const options = { limit: Math.min(100, amount - allMessages.length) };
+        if (lastId) options.before = lastId;
+        
+        const messages = await interaction.channel.messages.fetch(options);
+        if (messages.size === 0) break; // No more messages to fetch
+        
+        allMessages = allMessages.concat(Array.from(messages.values()));
+        lastId = messages.last().id;
+        
+        console.log(`Fetched batch of ${messages.size} messages, total: ${allMessages.length}`);
+      }
+
+      console.log(`Total messages fetched: ${allMessages.length}`);
+
+      // Process images as before, but use allMessages instead of messages
+      const imageMessages = allMessages.filter(msg => msg.attachments.some(attachment => {
+        const url = attachment.url.toLowerCase();
+        const cleanUrl = url.split('?')[0];
+        const isImage = attachment.contentType?.startsWith('image/') || 
+               cleanUrl.endsWith('.jpg') || 
+               cleanUrl.endsWith('.jpeg') || 
+               cleanUrl.endsWith('.png') || 
+               cleanUrl.endsWith('.gif') ||
+               cleanUrl.endsWith('.webp');
+        
+        // Debug logging
+        if (msg.attachments.size > 0) {
+          console.log(`Message ${msg.id} has ${msg.attachments.size} attachments`);
+          console.log(`URL: ${url} - Is Image: ${isImage}`);
+        }
+        
+        return isImage;
+      }));
       
       console.log(`Found ${imageMessages.length} messages with images`);
 
