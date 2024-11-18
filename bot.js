@@ -763,126 +763,138 @@ client.on('error', error => {
 // Login
 client.login(process.env.DISCORD_TOKEN); 
 
-// Add message event handler
+// Define our Discord tools as functions
+const discordTools = [
+  {
+    name: "getUserInfo",
+    description: "Get information about a Discord user",
+    parameters: {
+      type: "object",
+      properties: {
+        userId: {
+          type: "string",
+          description: "The Discord user ID to look up"
+        }
+      },
+      required: ["userId"]
+    }
+  },
+  {
+    name: "getRecentMessages",
+    description: "Get recent messages from the channel",
+    parameters: {
+      type: "object",
+      properties: {
+        limit: {
+          type: "number",
+          description: "Number of messages to fetch (default: 5, max: 10)"
+        }
+      }
+    }
+  },
+  {
+    name: "getChannelInfo",
+    description: "Get information about the current channel",
+    parameters: {
+      type: "object",
+      properties: {}
+    }
+  }
+];
+
+// Function to handle tool calls
+async function executeToolCall(toolCall, message, client) {
+  const { name, arguments: args } = toolCall.function;
+  const parsedArgs = JSON.parse(args);
+
+  switch (name) {
+    case 'getUserInfo':
+      return await getDiscordUserInfo(client, parsedArgs.userId);
+    case 'getRecentMessages':
+      return await getRecentMessages(message.channel, parsedArgs.limit || 5);
+    case 'getChannelInfo':
+      return await getChannelInfo(message.channel);
+    default:
+      throw new Error(`Unknown tool: ${name}`);
+  }
+}
+
 client.on('messageCreate', async message => {
   if (message.author.bot) return;
 
   if (message.mentions.has(client.user)) {
     const question = message.content.replace(/<@!?(\d+)>/g, '').trim();
     
-    // Build context object
-    const context = {
-      channel: {
-        name: message.channel.name,
-        type: message.channel.type,
-        isNSFW: message.channel.nsfw
-      },
-      author: await getDiscordUserInfo(client, message.author.id),
-      mentionedUsers: await Promise.all(
-        message.mentions.users.map(user => getDiscordUserInfo(client, user.id))
-      ),
-      guild: message.guild ? {
-        name: message.guild.name,
-        memberCount: message.guild.memberCount,
-      } : null
-    };
-
-    // Add context to the Grok prompt
-    const contextualPrompt = `
-      ${BURT_PROMPT}
-      
-      Current Discord Context:
-      - Channel: #${context.channel.name}
-      - Server: ${context.guild?.name || 'DM'}
-      - Speaking to: ${context.author.username}
-      ${context.mentionedUsers.length > 1 ? `- Other mentioned users: ${context.mentionedUsers.filter(u => u.id !== client.user.id).map(u => u.username).join(', ')}` : ''}
-    `;
-
-    // Check cooldown
-    const userId = message.author.id;
-    const cooldownEnd = userCooldowns.get(userId);
-    
-    if (cooldownEnd && Date.now() < cooldownEnd) {
-      const remainingTime = Math.ceil((cooldownEnd - Date.now()) / 1000);
-      await message.reply({ 
-        content: `*[BURT twitches nervously]* The voices say we need to wait ${remainingTime} more seconds... They're very insistent about it!`,
-      });
-      return;
-    }
-    
-    userCooldowns.set(userId, Date.now() + COOLDOWN_DURATION);
-
     try {
-      // Show typing indicator while processing
-      await message.channel.sendTyping();
-
+      // Initial completion request
       const completion = await openai.chat.completions.create({
         model: "grok-beta",
         messages: [
-          { role: "system", content: contextualPrompt },
+          { 
+            role: "system", 
+            content: BURT_PROMPT + "\nYou have access to Discord tools to get more information when needed." 
+          },
           { 
             role: "user", 
-            content: `Context: ${JSON.stringify(context, null, 2)}\n\nQuestion: ${question}`
+            content: question 
           }
         ],
-        max_tokens: 500,
-        temperature: 0.9,
-        presence_penalty: 0.6,
-        frequency_penalty: 0.4
+        tools: discordTools,
+        tool_choice: "auto"
       });
 
-      let response = completion.choices[0].message.content;
-      
-      // Clean up truncated responses
-      if (response.length === 500) {
-        const lastPeriod = response.lastIndexOf('.');
-        const lastExclamation = response.lastIndexOf('!');
-        const lastQuestion = response.lastIndexOf('?');
-        
-        const lastSentenceEnd = Math.max(lastPeriod, lastExclamation, lastQuestion);
-        
-        if (lastSentenceEnd > 0) {
-          response = response.substring(0, lastSentenceEnd + 1);
-        }
-        
-        response += ' [*BURT gets distracted by a shiny object*]';
+      let response = completion.choices[0].message;
+
+      // Handle any tool calls
+      while (response.tool_calls) {
+        const toolResults = await Promise.all(
+          response.tool_calls.map(async toolCall => {
+            const result = await executeToolCall(toolCall, message, client);
+            return {
+              tool_call_id: toolCall.id,
+              role: "tool",
+              content: JSON.stringify(result)
+            };
+          })
+        );
+
+        // Get next completion with tool results
+        const nextCompletion = await openai.chat.completions.create({
+          model: "grok-beta",
+          messages: [
+            { 
+              role: "system", 
+              content: BURT_PROMPT 
+            },
+            { 
+              role: "user", 
+              content: question 
+            },
+            response,
+            ...toolResults
+          ],
+          tools: discordTools,
+          tool_choice: "auto"
+        });
+
+        response = nextCompletion.choices[0].message;
       }
 
-      console.log(`BURT's response to mention: ${response}`);
-
+      // Send final response
       const embed = new EmbedBuilder()
         .setTitle('🤪 BURT Speaks! 🎭')
-        .setDescription(response)
+        .setDescription(response.content)
         .setColor('#FF69B4')
         .setFooter({ 
           text: `Responding to ${message.author.username} [Yes, they seem nice... NO, I won't share the secret!]` 
         })
         .setTimestamp();
 
-      if (Math.random() > 0.7) {
-        embed.addFields({
-          name: '💭 Random BURT Thought',
-          value: '*[mumbles something about fish tanks and cosmic significance]*'
-        });
-      }
-
       await message.reply({ embeds: [embed] });
 
     } catch (error) {
-      console.error('Error in mention response:', error);
-      
-      let errorMessage = '*[BURT stares intensely at a wall]*';
-      
-      if (error.status === 401) {
-        errorMessage += ' The voices say something about invalid credentials...';
-      } else if (error.status === 429) {
-        errorMessage += ' TOO MANY VOICES AT ONCE! We need to wait a bit...';
-      } else if (error.status === 500) {
-        errorMessage += ' The cosmic signals are distorted right now...';
-      }
-      
-      await message.reply(errorMessage)
-        .catch(() => console.error('Failed to send error message'));
+      console.error('Error processing message:', error);
+      await message.reply('*[BURT stares at the wall in confusion]*');
     }
   }
 }); 
@@ -900,5 +912,70 @@ async function getDiscordUserInfo(client, userId) {
   } catch (error) {
     console.error('Error fetching user info:', error);
     return null;
+  }
+} 
+
+async function getRecentMessages(channel, limit = 5) {
+  try {
+    const messages = await channel.messages.fetch({ limit });
+    return messages.map(msg => ({
+      content: msg.content,
+      author: msg.author.username,
+      timestamp: msg.createdTimestamp,
+      isBot: msg.author.bot
+    }));
+  } catch (error) {
+    console.error('Error fetching message history:', error);
+    return [];
+  }
+} 
+
+async function getChannelInfo(channel) {
+  try {
+    return {
+      name: channel.name,
+      type: channel.type,
+      topic: channel.topic,
+      memberCount: channel.members?.size,
+      isNSFW: channel.nsfw,
+      createdAt: channel.createdAt,
+      lastMessageAt: channel.lastMessageAt,
+      threadCount: channel.threads?.cache.size
+    };
+  } catch (error) {
+    console.error('Error fetching channel info:', error);
+    return null;
+  }
+} 
+
+async function getGuildMemberInfo(guild, userId) {
+  try {
+    const member = await guild.members.fetch(userId);
+    return {
+      nickname: member.nickname,
+      roles: member.roles.cache.map(role => role.name),
+      joinedAt: member.joinedAt,
+      isBoosting: member.premiumSince ? true : false,
+      isAdmin: member.permissions.has('Administrator'),
+      status: member.presence?.status || 'offline',
+      activity: member.presence?.activities[0]?.name
+    };
+  } catch (error) {
+    console.error('Error fetching member info:', error);
+    return null;
+  }
+} 
+
+async function getServerEmojis(guild) {
+  try {
+    return guild.emojis.cache.map(emoji => ({
+      name: emoji.name,
+      id: emoji.id,
+      animated: emoji.animated,
+      available: emoji.available
+    }));
+  } catch (error) {
+    console.error('Error fetching emojis:', error);
+    return [];
   }
 } 
