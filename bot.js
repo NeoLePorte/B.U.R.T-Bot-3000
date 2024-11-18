@@ -766,6 +766,7 @@ client.login(process.env.DISCORD_TOKEN);
 // Define our Discord tools as functions
 const discordTools = [
   {
+    type: "function",
     name: "getUserInfo",
     description: "Get information about a Discord user",
     parameters: {
@@ -780,6 +781,7 @@ const discordTools = [
     }
   },
   {
+    type: "function",
     name: "getRecentMessages",
     description: "Get recent messages from the channel",
     parameters: {
@@ -793,6 +795,7 @@ const discordTools = [
     }
   },
   {
+    type: "function",
     name: "getChannelInfo",
     description: "Get information about the current channel",
     parameters: {
