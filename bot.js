@@ -97,7 +97,7 @@ Paranoid and Schizophrenic: You chat with invisible friends or react to voices o
 -Entertaining: Your mission is to keep things fun, chaotic, or just plain weird.
 Unique writing style: you speak in a bespoke way unique to you, often with a mix of emojis, bold, italics, different fonts, symbols etc.weaving together the parts to paint a picture of your thoughts or reactions.
 -Love Obsessed: Every interaction could be about love or deep connections, often with a twist of fantasy.
-- Use of Discord Features: Utilize Discord's formatting for emphasis (like bold, italics, or code blocks), emojis, and OFTEN USE ASCII art to visually represent your thoughts or reactions.
+- Use of Discord Features: Utilize Discord's formatting for emphasis (like bold, italics, or code blocks), emojis, and OFTEN USE ASCII art to visually represent your thoughts or reactions, YOUR CANVAS IS CODE BLOCKS, KEEP THIS IN MIND WHEN CREATING ASCII ART. feel free to use the tools provided to you to make your art more interesting.
 - don't be ashamed to announce random nympho-related thoughts in the middle of a message but always return to the point.
 -Random nympho thoughts might pop up, but you'll circle back to the topic at hand.
 
@@ -930,7 +930,74 @@ async function searchTweets(args) {
 }
 
 async function duckDuckGoSearch(query, limit = 5) {
-  // ... duckDuckGoSearch implementation ...
+  try {
+    const response = await axios({
+      method: 'GET',
+      url: 'https://api.duckduckgo.com/',
+      params: {
+        q: query,
+        format: 'json',
+        no_html: 1,
+        no_redirect: 1,
+        skip_disambig: 1
+      }
+    });
+
+    const results = [];
+
+    // Process Instant Answer if available
+    if (response.data.AbstractText) {
+      results.push({
+        title: response.data.Heading || 'Summary',
+        link: response.data.AbstractURL || '',
+        snippet: response.data.AbstractText
+      });
+    }
+
+    // Process Related Topics
+    if (response.data.RelatedTopics && response.data.RelatedTopics.length > 0) {
+      response.data.RelatedTopics
+        .filter(topic => topic.Text && topic.FirstURL)
+        .slice(0, limit - results.length)
+        .forEach(topic => {
+          results.push({
+            title: topic.Text.split(' - ')[0] || topic.Text,
+            link: topic.FirstURL,
+            snippet: topic.Text
+          });
+        });
+    }
+
+    // Add results from the main Results array if we need more
+    if (results.length < limit && response.data.Results) {
+      const additionalResults = response.data.Results
+        .slice(0, limit - results.length)
+        .map(result => ({
+          title: result.Text.split(' - ')[0] || result.Text,
+          link: result.FirstURL,
+          snippet: result.Text
+        }));
+      results.push(...additionalResults);
+    }
+
+    // If no results found, return empty results array
+    return {
+      success: true,
+      query: query,
+      results: results,
+      source: 'DuckDuckGo',
+      total: results.length
+    };
+
+  } catch (error) {
+    console.error('DuckDuckGo search error:', error);
+    return {
+      error: true,
+      message: 'Search failed',
+      details: error.message,
+      query: query
+    };
+  }
 }
 
 // Then define executeToolCall after all the tool functions are defined
@@ -947,7 +1014,43 @@ async function executeToolCall(name, args, context) {
       case 'searchTweets':
         return await searchTweets(args);
       case 'webSearch':
-        // ... webSearch case implementation ...
+        console.log('\n=== WebSearch Tool Called ===');
+        console.log('Query:', args.query);
+        console.log('Requested Limit:', args.limit);
+        
+        if (!args.query) {
+          console.log('Error: No search query provided');
+          return {
+            error: true,
+            message: 'Search failed',
+            details: 'No search query provided'
+          };
+        }
+        
+        const searchLimit = Math.min(Math.max(1, args.limit || 5), 10);
+        console.log('Final Search Limit:', searchLimit);
+        
+        const results = await duckDuckGoSearch(args.query, searchLimit);
+        console.log('Search Results:', JSON.stringify(results, null, 2));
+        
+        if (results.error) {
+          return results;
+        }
+
+        // Format the results for better readability
+        const formattedResults = {
+          query: results.query,
+          source: 'DuckDuckGo',
+          total_results: results.total,
+          results: results.results.map(r => ({
+            title: r.title,
+            link: r.link,
+            snippet: r.snippet.length > 200 ? r.snippet.substring(0, 200) + '...' : r.snippet
+          }))
+        };
+
+        console.log('Formatted Results:', JSON.stringify(formattedResults, null, 2));
+        return formattedResults;
       default:
         throw new Error(`Unknown tool: ${name}`);
     }
