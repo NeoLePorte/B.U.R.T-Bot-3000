@@ -893,7 +893,7 @@ const functions = [
       properties: {
         query: {
           type: "string",
-          description: "The search query",
+          description: "The search query to look up",
         },
         limit: {
           type: "number",
@@ -932,8 +932,35 @@ async function executeToolCall(name, args, context) {
         return await searchTweets(args);
       
       case 'webSearch':
-        return await duckDuckGoSearch(args.query, args.limit);
-      
+        if (!args.query) {
+          return {
+            error: true,
+            message: 'Search failed',
+            details: 'No search query provided'
+          };
+        }
+        
+        const searchLimit = Math.min(Math.max(1, args.limit || 5), 10); // Limit between 1 and 10
+        const results = await duckDuckGoSearch(args.query, searchLimit);
+        
+        if (results.error) {
+          return results;
+        }
+
+        // Format the results for better readability in Discord
+        const formattedResults = {
+          query: results.query,
+          source: 'DuckDuckGo',
+          total_results: results.total,
+          results: results.results.map(r => ({
+            title: r.title,
+            link: r.link,
+            snippet: r.snippet.length > 200 ? r.snippet.substring(0, 200) + '...' : r.snippet
+          }))
+        };
+
+        return formattedResults;
+        
       default:
         throw new Error(`Unknown tool: ${name}`);
     }
@@ -1275,46 +1302,80 @@ async function fetchUserMessages(channel, userId, limit = 50) {
 // Add near the top with other helper functions
 async function duckDuckGoSearch(query, limit = 5) {
   try {
+    // First try the Instant Answer API
     const response = await axios.get('https://api.duckduckgo.com/', {
       params: {
         q: query,
         format: 'json',
         no_html: 1,
-        skip_disambig: 1
+        skip_disambig: 1,
+        no_redirect: 1
       }
     });
 
-    // Extract and format the results
     const results = [];
     
-    // Add Abstract if it exists
-    if (response.data.Abstract) {
+    // Add Instant Answer if it exists
+    if (response.data.AbstractText) {
       results.push({
-        title: response.data.Heading,
-        link: response.data.AbstractURL,
-        snippet: response.data.Abstract
+        title: response.data.Heading || 'Instant Answer',
+        link: response.data.AbstractURL || '',
+        snippet: response.data.AbstractText
+      });
+    }
+
+    // Add Definition if it exists
+    if (response.data.Definition) {
+      results.push({
+        title: 'Definition',
+        link: response.data.DefinitionURL || '',
+        snippet: response.data.Definition
       });
     }
 
     // Add Related Topics
-    const topics = response.data.RelatedTopics
-      .filter(topic => topic.Text && topic.FirstURL) // Filter out section headers
-      .slice(0, limit - results.length)
-      .map(topic => ({
-        title: topic.Text.split(' - ')[0],
-        link: topic.FirstURL,
-        snippet: topic.Text
-      }));
+    if (response.data.RelatedTopics && response.data.RelatedTopics.length > 0) {
+      const topics = response.data.RelatedTopics
+        .filter(topic => topic.Text && topic.FirstURL) // Filter out section headers
+        .slice(0, limit - results.length)
+        .map(topic => ({
+          title: topic.Text.split(' - ')[0] || topic.Text,
+          link: topic.FirstURL,
+          snippet: topic.Text
+        }));
 
-    results.push(...topics);
+      results.push(...topics);
+    }
 
-    return results;
+    // If we still don't have enough results, add any other available info
+    if (results.length < limit && response.data.Results) {
+      const additionalResults = response.data.Results
+        .slice(0, limit - results.length)
+        .map(result => ({
+          title: result.Text.split(' - ')[0] || result.Text,
+          link: result.FirstURL,
+          snippet: result.Text
+        }));
+
+      results.push(...additionalResults);
+    }
+
+    // Return formatted results
+    return {
+      success: true,
+      query: query,
+      results: results,
+      source: 'DuckDuckGo',
+      total: results.length
+    };
+
   } catch (error) {
     console.error('DuckDuckGo search error:', error);
     return {
       error: true,
       message: 'Search failed',
-      details: error.message
+      details: error.message,
+      query: query
     };
   }
 }
