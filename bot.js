@@ -619,7 +619,7 @@ client.on('interactionCreate', async interaction => {
               },
               { 
                 role: "user", 
-                content: question 
+                content: `[Context: Command from user: ${interaction.user.username}]\n${question}` 
               }
             ],
             max_tokens: 1000,
@@ -631,36 +631,33 @@ client.on('interactionCreate', async interaction => {
           console.log('\nInitial Response:', JSON.stringify(response, null, 2));
 
           // Handle tool calls
-          let finalResponse = response;
+          let toolResults = [];
           if (response.tool_calls) {
             console.log('\n=== Processing Tool Calls ===');
-            const toolResults = await Promise.all(
-              response.tool_calls.map(async toolCall => {
-                console.log(`\nTool: ${toolCall.function.name}`);
-                console.log(`Arguments: ${toolCall.function.arguments}`);
-                
-                try {
-                  const args = JSON.parse(toolCall.function.arguments);
-                  const result = await executeToolCall(toolCall.function.name, args, interaction);
-                  
-                  return {
-                    tool_call_id: toolCall.id,
-                    role: "tool",
-                    content: JSON.stringify(result)
-                  };
-                } catch (error) {
-                  console.error('Tool execution failed:', error);
-                  return {
-                    tool_call_id: toolCall.id,
-                    role: "tool",
-                    content: JSON.stringify({ error: true, message: error.message })
-                  };
-                }
-              })
-            );
+            for (const toolCall of response.tool_calls) {
+              console.log(`\nTool: ${toolCall.function.name}`);
+              console.log(`Arguments: ${toolCall.function.arguments}`);
+              try {
+                const args = JSON.parse(toolCall.function.arguments);
+                const result = await executeToolCall(toolCall.function.name, args, interaction);
+                toolResults.push({
+                  tool_call_id: toolCall.id,
+                  role: "tool",
+                  content: JSON.stringify(result)
+                });
+              } catch (error) {
+                console.error('Tool execution failed:', error);
+                toolResults.push({
+                  tool_call_id: toolCall.id,
+                  role: "tool",
+                  content: JSON.stringify({ error: true, message: error.message })
+                });
+              }
+            }
+          }
 
-            // Get follow-up completion with tool results
-            console.log('\n=== Getting Final Response with Tool Results ===');
+          // Get final response with tool results
+          if (toolResults.length > 0) {
             const messages = [
               { 
                 role: "system", 
@@ -668,7 +665,7 @@ client.on('interactionCreate', async interaction => {
               },
               { 
                 role: "user", 
-                content: question 
+                content: `[Context: Command from user: ${interaction.user.username}]\n${question}`
               },
               response,
               ...toolResults
@@ -682,17 +679,11 @@ client.on('interactionCreate', async interaction => {
               max_tokens: 1000
             });
 
-            finalResponse = nextCompletion.choices[0].message;
-            console.log('\nFinal Response:', JSON.stringify(finalResponse, null, 2));
+            response = nextCompletion.choices[0].message;
           }
 
           // Send final response
-          const sanitizedContent = sanitizeResponse(finalResponse.content || 'No response');
-          console.log('\n=== Final Response Length ===');
-          console.log(`Original: ${finalResponse.content?.length || 0}`);
-          console.log(`Sanitized: ${sanitizedContent.length}`);
-          console.log('Content:', sanitizedContent);
-
+          const sanitizedContent = sanitizeResponse(response.content || 'No response');
           const embed = new EmbedBuilder()
             .setTitle('🤪 BURT Speaks! ')
             .setDescription(sanitizedContent)
