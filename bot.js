@@ -1379,3 +1379,79 @@ async function duckDuckGoSearch(query, limit = 5) {
     };
   }
 }
+
+// Add this after your other helper functions
+async function searchTweets(args) {
+  try {
+    // Check rate limits
+    if (!canMakeTwitterRequest()) {
+      return {
+        error: true,
+        message: 'Rate limit exceeded',
+        details: 'Please try again later'
+      };
+    }
+
+    // Check cache first
+    const cacheKey = `tweets_${args.limit}_${args.sort_order}`;
+    const cachedResults = tweetCache.get(cacheKey);
+    if (cachedResults) {
+      return cachedResults;
+    }
+
+    // Prepare search parameters
+    const query = encodeURIComponent('#fishtanklive');
+    const limit = Math.min(Math.max(10, args.limit || 10), 100);
+    const sort = args.sort_order || 'recency';
+
+    // Make request to Twitter API
+    const response = await fetch(`https://api.twitter.com/2/tweets/search/recent?query=${query}&max_results=${limit}&tweet.fields=created_at,public_metrics`, {
+      headers: {
+        'Authorization': `Bearer ${process.env.TWITTER_BEARER_TOKEN}`
+      }
+    });
+
+    // Handle rate limits
+    const rateLimitRemaining = response.headers.get('x-rate-limit-remaining');
+    const rateLimitReset = response.headers.get('x-rate-limit-reset');
+
+    if (rateLimitRemaining !== null) {
+      TWITTER_RATE_LIMIT.requests = TWITTER_RATE_LIMIT.maxRequests - parseInt(rateLimitRemaining, 10);
+    }
+    if (rateLimitReset) {
+      TWITTER_RATE_LIMIT.resetTime = parseInt(rateLimitReset, 10) * 1000;
+    }
+
+    if (!response.ok) {
+      throw new Error(`Twitter API error: ${response.status}`);
+    }
+
+    const data = await response.json();
+    const results = {
+      success: true,
+      tweets: data.data?.map(tweet => ({
+        id: tweet.id,
+        text: tweet.text,
+        created_at: tweet.created_at,
+        metrics: tweet.public_metrics,
+        url: `https://twitter.com/i/web/status/${tweet.id}`
+      })) || [],
+      total: data.meta?.result_count || 0,
+      newest_id: data.meta?.newest_id,
+      oldest_id: data.meta?.oldest_id
+    };
+
+    // Cache the results
+    tweetCache.set(cacheKey, results);
+
+    return results;
+
+  } catch (error) {
+    console.error('Twitter search error:', error);
+    return {
+      error: true,
+      message: 'Search failed',
+      details: error.message
+    };
+  }
+}
