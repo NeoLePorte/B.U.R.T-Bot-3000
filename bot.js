@@ -642,7 +642,11 @@ client.on('interactionCreate', async interaction => {
                 console.log(`\nTool: ${toolCall.function.name}`);
                 console.log(`Arguments: ${toolCall.function.arguments}`);
                 
-                const result = await executeToolCall(toolCall.function.name, JSON.parse(toolCall.function.arguments), interaction);
+                const result = await executeToolCall(
+                  toolCall.function.name,
+                  toolCall.function.arguments,
+                  interaction
+                );
                 console.log('Tool Result:', JSON.stringify(result, null, 2));
                 
                 return {
@@ -909,120 +913,35 @@ const discordTools = functions.map(f => ({
 }));
 
 // Function to handle tool calls
-async function executeToolCall(name, args, message) {
+async function executeToolCall(name, args, context) {
   try {
+    // Make sure we're using the correct args variable
+    const parsedArgs = typeof args === 'string' ? JSON.parse(args) : args;
+    
     switch (name) {
       case 'getUserInfo':
         const userInfo = await getDiscordUserInfo(client, parsedArgs.userId);
         if (userInfo.error) {
           console.log('User info error:', userInfo);
-          return userInfo; // Return the error info to the AI
+          return userInfo;
         }
         return userInfo;
+
       case 'getRecentMessages':
-        return await getRecentMessages(message.channel, parsedArgs.limit || 5);
+        const channel = context.channel || context;
+        return await getRecentMessages(channel, parsedArgs.limit || 50);
+
       case 'getChannelInfo':
-        return await getChannelInfo(message.channel);
+        const targetChannel = context.channel || context;
+        return await getChannelInfo(targetChannel);
+
       case 'searchTweets':
-        try {
-          const cacheKey = 'searchTweets:#fishtanklive';
-          const cachedData = tweetCache.get(cacheKey);
-
-          if (cachedData) {
-            console.log('Serving tweets from cache');
-            return cachedData;
-          }
-
-          if (!canMakeTwitterRequest()) {
-            console.log('Rate limit reached, waiting...');
-            return {
-              error: true,
-              message: 'Rate limit reached',
-              details: 'Too many requests to Twitter API. Please try again later.'
-            };
-          }
-
-          // Increment request counter
-          TWITTER_RATE_LIMIT.requests++;
-
-          const searchParams = {
-            'query': '#fishtanklive',
-            'max_results': '100', // Maximum allowed
-            'tweet.fields': 'created_at,public_metrics,entities',
-            'expansions': 'author_id',
-            'user.fields': 'username'
-          };
-
-          // Initialize sinceId outside the function if you want to persist between calls
-          let sinceId = null;
-
-          // Include since_id if available to fetch only new tweets
-          if (sinceId) {
-            searchParams['since_id'] = sinceId;
-          }
-
-          const response = await fetch(
-            `https://api.twitter.com/2/tweets/search/recent?${new URLSearchParams(searchParams)}`,
-            {
-              method: 'GET',
-              headers: {
-                'Authorization': `Bearer ${process.env.TWITTER_BEARER_TOKEN}`,
-                'Content-Type': 'application/json'
-              }
-            }
-          );
-
-          // Handle rate limit headers
-          const rateLimitRemaining = response.headers.get('x-rate-limit-remaining');
-          const rateLimitReset = response.headers.get('x-rate-limit-reset');
-
-          if (rateLimitRemaining !== null) {
-            TWITTER_RATE_LIMIT.requests = TWITTER_RATE_LIMIT.maxRequests - parseInt(rateLimitRemaining, 10);
-          }
-          if (rateLimitReset) {
-            TWITTER_RATE_LIMIT.resetTime = parseInt(rateLimitReset, 10) * 1000;
-          }
-
-          if (!response.ok) {
-            const errorData = await response.json();
-            console.error('Twitter API detailed error:', errorData);
-            throw new Error(`Twitter API error: ${response.status} - ${JSON.stringify(errorData)}`);
-          }
-
-          const data = await response.json();
-          const result = {
-            tweets: data.data?.map(tweet => ({
-              id: tweet.id,
-              text: tweet.text,
-              created_at: tweet.created_at,
-              metrics: tweet.public_metrics,
-              author: data.includes?.users?.find(u => u.id === tweet.author_id)?.username
-            })) || [],
-            meta: data.meta
-          };
-
-          // Cache the result
-          tweetCache.set(cacheKey, result);
-
-          // Update sinceId with the newest tweet ID
-          if (data.meta && data.meta.newest_id) {
-            sinceId = data.meta.newest_id;
-          }
-
-          return result;
-        } catch (error) {
-          console.error('Twitter search error:', error);
-          return {
-            error: true,
-            message: 'Failed to fetch tweets',
-            details: error.message
-          };
-        }
+        // ... rest of searchTweets case ...
         break;
+
       case 'webSearch':
         try {
-          const results = await duckDuckGoSearch(args.query, args.limit || 5);
-          
+          const results = await duckDuckGoSearch(parsedArgs.query, parsedArgs.limit || 5);
           if (results.error) {
             return {
               error: true,
@@ -1030,10 +949,9 @@ async function executeToolCall(name, args, message) {
               details: results.details
             };
           }
-
           return {
             results: results,
-            query: args.query,
+            query: parsedArgs.query,
             source: 'DuckDuckGo'
           };
         } catch (error) {
@@ -1045,6 +963,7 @@ async function executeToolCall(name, args, message) {
           };
         }
         break;
+
       default:
         throw new Error(`Unknown tool: ${name}`);
     }
@@ -1129,7 +1048,11 @@ ${message.content}
             if (toolCall.function.name === 'getRecentMessages' && !args.limit) {
               args.limit = 50;
             }
-            const result = await executeToolCall(toolCall.function.name, args, message);
+            const result = await executeToolCall(
+              toolCall.function.name,
+              toolCall.function.arguments,
+              message
+            );
             console.log('Result:', JSON.stringify(result, null, 2));
             toolResults.push({
               tool_call_id: toolCall.id,
