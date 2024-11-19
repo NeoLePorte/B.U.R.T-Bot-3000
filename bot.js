@@ -642,18 +642,23 @@ client.on('interactionCreate', async interaction => {
                 console.log(`\nTool: ${toolCall.function.name}`);
                 console.log(`Arguments: ${toolCall.function.arguments}`);
                 
-                const result = await executeToolCall(
-                  toolCall.function.name,
-                  toolCall.function.arguments,
-                  interaction
-                );
-                console.log('Tool Result:', JSON.stringify(result, null, 2));
-                
-                return {
-                  tool_call_id: toolCall.id,
-                  role: "tool",
-                  content: JSON.stringify(result)
-                };
+                try {
+                  const args = JSON.parse(toolCall.function.arguments);
+                  const result = await executeToolCall(toolCall.function.name, args, interaction);
+                  
+                  return {
+                    tool_call_id: toolCall.id,
+                    role: "tool",
+                    content: JSON.stringify(result)
+                  };
+                } catch (error) {
+                  console.error('Tool execution failed:', error);
+                  return {
+                    tool_call_id: toolCall.id,
+                    role: "tool",
+                    content: JSON.stringify({ error: true, message: error.message })
+                  };
+                }
               })
             );
 
@@ -915,55 +920,23 @@ const discordTools = functions.map(f => ({
 // Function to handle tool calls
 async function executeToolCall(name, args, context) {
   try {
-    // Make sure we're using the correct args variable
-    const parsedArgs = typeof args === 'string' ? JSON.parse(args) : args;
-    
     switch (name) {
       case 'getUserInfo':
-        const userInfo = await getDiscordUserInfo(client, parsedArgs.userId);
-        if (userInfo.error) {
-          console.log('User info error:', userInfo);
-          return userInfo;
-        }
-        return userInfo;
-
+        return await getDiscordUserInfo(client, args.userId);
+      
       case 'getRecentMessages':
-        const channel = context.channel || context;
-        return await getRecentMessages(channel, parsedArgs.limit || 50);
-
+        const channel = context.channel;
+        return await getRecentMessages(channel, args.limit || 50);
+      
       case 'getChannelInfo':
-        const targetChannel = context.channel || context;
-        return await getChannelInfo(targetChannel);
-
+        return await getChannelInfo(context.channel);
+      
       case 'searchTweets':
-        // ... rest of searchTweets case ...
-        break;
-
+        return await searchTweets(args);
+      
       case 'webSearch':
-        try {
-          const results = await duckDuckGoSearch(parsedArgs.query, parsedArgs.limit || 5);
-          if (results.error) {
-            return {
-              error: true,
-              message: 'Search failed',
-              details: results.details
-            };
-          }
-          return {
-            results: results,
-            query: parsedArgs.query,
-            source: 'DuckDuckGo'
-          };
-        } catch (error) {
-          console.error('Web search error:', error);
-          return {
-            error: true,
-            message: 'Search failed',
-            details: error.message
-          };
-        }
-        break;
-
+        return await duckDuckGoSearch(args.query, args.limit);
+      
       default:
         throw new Error(`Unknown tool: ${name}`);
     }
@@ -1043,42 +1016,42 @@ ${message.content}
           console.log(`\nTool: ${toolCall.function.name}`);
           console.log(`Arguments: ${toolCall.function.arguments}`);
           try {
-            // Update default limit to 50
             const args = JSON.parse(toolCall.function.arguments);
             if (toolCall.function.name === 'getRecentMessages' && !args.limit) {
               args.limit = 50;
             }
-            const result = await executeToolCall(
-              toolCall.function.name,
-              toolCall.function.arguments,
-              message
-            );
-            console.log('Result:', JSON.stringify(result, null, 2));
+            const result = await executeToolCall(toolCall.function.name, args, message);
             toolResults.push({
               tool_call_id: toolCall.id,
               role: "tool",
               content: JSON.stringify(result)
             });
           } catch (error) {
-            console.error(`Tool execution failed:`, error);
+            console.error('Tool execution failed:', error);
+            toolResults.push({
+              tool_call_id: toolCall.id,
+              role: "tool",
+              content: JSON.stringify({ error: true, message: error.message })
+            });
           }
         }
-
-        // Get final response with tool results
-        console.log('\n=== Getting Final Response with Tool Results ===');
-        const finalCompletion = await openai.chat.completions.create({
-          model: "grok-beta",
-          messages: [
-            { role: "system", content: BURT_PROMPT },
-            { role: "user", content: contextualQuestion },
-            response,
-            ...toolResults
-          ],
-          max_tokens: 1000
-        });
-        
-        response = finalCompletion.choices[0].message;
       }
+
+      // Get final response with tool results
+      console.log('\n=== Getting Final Response with Tool Results ===');
+      const finalCompletion = await openai.chat.completions.create({
+        model: "grok-beta",
+        messages: [
+          { role: "system", content: BURT_PROMPT },
+          { role: "user", content: contextualQuestion },
+          response,
+          ...toolResults
+        ],
+        max_tokens: 1000
+      });
+      
+      response = finalCompletion.choices[0].message;
+      console.log('\nFinal Response:', JSON.stringify(response, null, 2));
 
       // Send final response
       const sanitizedContent = sanitizeResponse(response.content || 'No response');
