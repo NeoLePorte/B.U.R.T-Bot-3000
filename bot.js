@@ -930,7 +930,12 @@ async function searchTweets(args) {
 }
 
 async function duckDuckGoSearch(query, limit = 5) {
+  console.log('\n=== DuckDuckGo Search Started ===');
+  console.log('Query:', query);
+  console.log('Limit:', limit);
+  
   try {
+    console.log('Making DuckDuckGo API request...');
     const response = await axios({
       method: 'GET',
       url: 'https://api.duckduckgo.com/',
@@ -943,10 +948,14 @@ async function duckDuckGoSearch(query, limit = 5) {
       }
     });
 
+    console.log('DuckDuckGo Response Status:', response.status);
+    console.log('Response Data Keys:', Object.keys(response.data));
+    
     const results = [];
 
-    // Process Instant Answer if available
+    // Process Instant Answer
     if (response.data.AbstractText) {
+      console.log('Found Abstract Text:', response.data.AbstractText);
       results.push({
         title: response.data.Heading || 'Summary',
         link: response.data.AbstractURL || '',
@@ -956,6 +965,7 @@ async function duckDuckGoSearch(query, limit = 5) {
 
     // Process Related Topics
     if (response.data.RelatedTopics && response.data.RelatedTopics.length > 0) {
+      console.log('Found Related Topics:', response.data.RelatedTopics.length);
       response.data.RelatedTopics
         .filter(topic => topic.Text && topic.FirstURL)
         .slice(0, limit - results.length)
@@ -968,8 +978,9 @@ async function duckDuckGoSearch(query, limit = 5) {
         });
     }
 
-    // Add results from the main Results array if we need more
+    // Process main Results
     if (results.length < limit && response.data.Results) {
+      console.log('Found Main Results:', response.data.Results.length);
       const additionalResults = response.data.Results
         .slice(0, limit - results.length)
         .map(result => ({
@@ -980,7 +991,8 @@ async function duckDuckGoSearch(query, limit = 5) {
       results.push(...additionalResults);
     }
 
-    // If no results found, return empty results array
+    console.log('Final Results Count:', results.length);
+    
     return {
       success: true,
       query: query,
@@ -991,6 +1003,11 @@ async function duckDuckGoSearch(query, limit = 5) {
 
   } catch (error) {
     console.error('DuckDuckGo search error:', error);
+    console.error('Error details:', {
+      message: error.message,
+      code: error.code,
+      response: error.response?.data
+    });
     return {
       error: true,
       message: 'Search failed',
