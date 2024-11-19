@@ -984,43 +984,34 @@ function getUserIdFromMention(mention) {
 // Update the messageCreate handler around lines 913-996
 client.on('messageCreate', async message => {
   if (message.author.bot) return;
-
+  
+  // Check if bot is mentioned
   if (message.mentions.has(client.user)) {
     const loadingMessage = await message.reply('*[BURT twitches and starts thinking...]* 🤪');
     
-    // Extract the user in question (mentioned user or message author)
-    const mentionedUsers = message.mentions.users.filter(user => user.id !== client.user.id);
-    const targetUser = mentionedUsers.first() || message.author;
-
-    // Fetch messages from the target user
-    const userMessages = await fetchUserMessages(message.channel, targetUser.id, 50);
-
-    // Prepare context with user messages
-    const userMessageContent = userMessages.map(msg => `[${new Date(msg.createdTimestamp).toLocaleString()}]: ${msg.content}`).join('\n');
-
-    const contextualQuestion = `
-[Context: Message from user: ${message.author.username}]
-[Context: This message mentions users: ${JSON.stringify([{ id: targetUser.id, username: targetUser.username }])}]
-[User's Past Messages:\n${userMessageContent}]
-
-${message.content}
-    `;
-
-    console.log('\n=== New BURT Query ===');
-    console.log(`From: ${message.author.username}`);
-    console.log(`Mentioned Users:`, mentionedUsers);
-    console.log(`Question: ${contextualQuestion}`);
-    
     try {
+      // Extract mentioned users and prepare context similar to /ask
+      const mentionedUsers = message.mentions.users.filter(user => user.id !== client.user.id);
+      const targetUser = mentionedUsers.first() || message.author;
+      
+      // Fetch user messages for context
+      const userMessages = await fetchUserMessages(message.channel, targetUser.id, 50);
+      const userMessageContent = userMessages.map(msg => 
+        `[${new Date(msg.createdTimestamp).toLocaleString()}]: ${msg.content}`
+      ).join('\n');
+
+      const contextualQuestion = `
+        [Context: Message from user: ${message.author.username}]
+        [Context: This message mentions users: ${JSON.stringify([{ id: targetUser.id, username: targetUser.username }])}]
+        [User's Past Messages:\n${userMessageContent}]
+        ${message.content.replace(`<@${client.user.id}>`, '').trim()}
+      `;
+
       // Initial completion request
-      console.log('\n=== Making Initial Completion Request ===');
       const completion = await openai.chat.completions.create({
         model: "grok-beta",
         messages: [
-          { 
-            role: "system", 
-            content: BURT_PROMPT 
-          },
+          { role: "system", content: BURT_PROMPT },
           { role: "user", content: contextualQuestion }
         ],
         max_tokens: 1000,
@@ -1029,10 +1020,8 @@ ${message.content}
       });
 
       let response = completion.choices[0].message;
-      console.log('\n=== Initial Response ===');
-      console.log('Tool Calls:', response.tool_calls ? response.tool_calls.length : 'None');
-
-      // Handle tool calls first
+      
+      // Handle tool calls
       let toolResults = [];
       if (response.tool_calls) {
         console.log('\n=== Processing Tool Calls ===');
@@ -1041,9 +1030,6 @@ ${message.content}
           console.log(`Arguments: ${toolCall.function.arguments}`);
           try {
             const args = JSON.parse(toolCall.function.arguments);
-            if (toolCall.function.name === 'getRecentMessages' && !args.limit) {
-              args.limit = 50;
-            }
             const result = await executeToolCall(toolCall.function.name, args, message);
             toolResults.push({
               tool_call_id: toolCall.id,
@@ -1062,27 +1048,22 @@ ${message.content}
       }
 
       // Get final response with tool results
-      console.log('\n=== Getting Final Response with Tool Results ===');
-      const finalCompletion = await openai.chat.completions.create({
-        model: "grok-beta",
-        messages: [
-          { role: "system", content: BURT_PROMPT },
-          { role: "user", content: contextualQuestion },
-          response,
-          ...toolResults
-        ],
-        max_tokens: 1000
-      });
-      
-      response = finalCompletion.choices[0].message;
-      console.log('\nFinal Response:', JSON.stringify(response, null, 2));
+      if (toolResults.length > 0) {
+        const finalCompletion = await openai.chat.completions.create({
+          model: "grok-beta",
+          messages: [
+            { role: "system", content: BURT_PROMPT },
+            { role: "user", content: contextualQuestion },
+            response,
+            ...toolResults
+          ],
+          max_tokens: 1000
+        });
+        response = finalCompletion.choices[0].message;
+      }
 
       // Send final response
       const sanitizedContent = sanitizeResponse(response.content || 'No response');
-      console.log('\n=== Final Response Length ===');
-      console.log(`Original: ${response.content?.length || 0}`);
-      console.log(`Sanitized: ${sanitizedContent.length}`);
-
       const embed = new EmbedBuilder()
         .setTitle('🤪 BURT Speaks! ')
         .setDescription(sanitizedContent)
@@ -1096,7 +1077,7 @@ ${message.content}
 
     } catch (error) {
       console.error('Error processing message:', error);
-      await loadingMessage.edit('*[BURT stares at the wall in confusion]*');
+      await loadingMessage.edit('*[BURT has a mental breakdown]* Sorry, something went wrong in my head! 😵');
     }
   }
 });
