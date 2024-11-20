@@ -1570,17 +1570,8 @@ async function fetchUserMessages(channel, userId, limit = 50) {
 
 async function handleUserInput(message, question, isCommand = false) {
   try {
-    // 1. Get initial context with 100 messages
-    const recentMessages = await getRecentMessages(message.channel, 100);
-    const messagesContext = {
-      role: "system",
-      content: `Recent channel context:\n${JSON.stringify(recentMessages)}`
-    };
-
-    // 2. Check for mentions in the message
+    // Prepare context message with mention information
     const mentionedUsers = Array.from(message.mentions.users.values());
-    
-    // 3. Prepare context message with mention information
     const contextMessage = {
       role: "user",
       content: `[Context: ${isCommand ? 'Command' : 'Message'} from user: ${message.author.username} (${message.author.id})]
@@ -1588,20 +1579,19 @@ async function handleUserInput(message, question, isCommand = false) {
                 ${question}`
     };
 
-    // 4. Make initial completion request with context
+    // Let the model decide which tools to use
     const completion = await openai.chat.completions.create({
       model: "grok-beta",
       messages: [
         { role: "system", content: BURT_PROMPT },
-        messagesContext,
-        contextMessage
+        { role: "user", content: contextMessage }
       ],
       max_tokens: 1000,
       tools: discordTools,
       tool_choice: "auto"
     });
 
-    return await processToolCallsAndGetResponse(completion, message, messagesContext, contextMessage);
+    return await processToolCallsAndGetResponse(completion, message, contextMessage);
   } catch (error) {
     console.error('Error in handleUserInput:', error);
     throw error;
