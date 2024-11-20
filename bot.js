@@ -1285,29 +1285,23 @@ client.on('messageCreate', async message => {
     const loadingMessage = await message.reply('*[BURT twitches and starts thinking...]* 🤪');
     
     try {
-      // Extract mentioned users and prepare context similar to /ask
-      const mentionedUsers = message.mentions.users.filter(user => user.id !== client.user.id);
-      const targetUser = mentionedUsers.first() || message.author;
-      
-      // Fetch user messages for context
-      const userMessages = await fetchUserMessages(message.channel, targetUser.id, 50);
-      const userMessageContent = userMessages.map(msg => 
-        `[${new Date(msg.createdTimestamp).toLocaleString()}]: ${msg.content}`
-      ).join('\n');
-
-      const contextualQuestion = `
-        [Context: Message from user: ${message.author.username}]
-        [Context: This message mentions users: ${JSON.stringify([{ id: targetUser.id, username: targetUser.username }])}]
-        [User's Past Messages:\n${userMessageContent}]
-        ${message.content.replace(`<@${client.user.id}>`, '').trim()}
-      `;
+      // Extract the question (remove the mention)
+      const question = message.content.replace(`<@${client.user.id}>`, '').trim();
+      console.log(`Processing mention from ${message.author.username}: ${question}`);
 
       // Initial completion request
+      console.log('\n=== Initial Completion Request ===');
       const completion = await openai.chat.completions.create({
         model: "grok-beta",
         messages: [
-          { role: "system", content: BURT_PROMPT },
-          { role: "user", content: contextualQuestion }
+          { 
+            role: "system", 
+            content: BURT_PROMPT + "\nIMPORTANT: Keep responses under 4000 characters." 
+          },
+          { 
+            role: "user", 
+            content: `[Context: Message from user: ${message.author.username}]\n${question}` 
+          }
         ],
         max_tokens: 1000,
         tools: discordTools,
@@ -1315,7 +1309,8 @@ client.on('messageCreate', async message => {
       });
 
       let response = completion.choices[0].message;
-      
+      console.log('\nInitial Response:', JSON.stringify(response, null, 2));
+
       // Handle tool calls
       let toolResults = [];
       if (response.tool_calls) {
@@ -1344,17 +1339,28 @@ client.on('messageCreate', async message => {
 
       // Get final response with tool results
       if (toolResults.length > 0) {
-        const finalCompletion = await openai.chat.completions.create({
+        const messages = [
+          { 
+            role: "system", 
+            content: BURT_PROMPT 
+          },
+          { 
+            role: "user", 
+            content: `[Context: Message from user: ${message.author.username}]\n${question}`
+          },
+          response,
+          ...toolResults
+        ];
+        
+        console.log('Messages for final completion:', JSON.stringify(messages, null, 2));
+        
+        const nextCompletion = await openai.chat.completions.create({
           model: "grok-beta",
-          messages: [
-            { role: "system", content: BURT_PROMPT },
-            { role: "user", content: contextualQuestion },
-            response,
-            ...toolResults
-          ],
+          messages: messages,
           max_tokens: 1000
         });
-        response = finalCompletion.choices[0].message;
+
+        response = nextCompletion.choices[0].message;
       }
 
       // Send final response
@@ -1368,10 +1374,13 @@ client.on('messageCreate', async message => {
         })
         .setTimestamp();
 
-      await loadingMessage.edit({ content: null, embeds: [embed] });
+      await loadingMessage.edit({ 
+        content: null, 
+        embeds: [embed] 
+      });
 
     } catch (error) {
-      console.error('Error processing message:', error);
+      console.error('Error processing mention:', error);
       await loadingMessage.edit('*[BURT has a mental breakdown]* Sorry, something went wrong in my head! 😵');
     }
   }
