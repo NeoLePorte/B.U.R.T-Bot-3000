@@ -1139,13 +1139,11 @@ async function duckDuckGoSearch(query, limit = 5) {
     console.log('Making DuckDuckGo API request...');
     const response = await axios({
       method: 'GET',
-      url: 'https://api.duckduckgo.com/',
+      url: 'http://api.duckduckgo.com/',
       params: {
         q: query,
         format: 'json',
-        no_html: 1,
-        no_redirect: 1,
-        skip_disambig: 1
+        t: 'burtbot'
       }
     });
 
@@ -1154,9 +1152,8 @@ async function duckDuckGoSearch(query, limit = 5) {
     
     const results = [];
 
-    // Process Instant Answer
+    // Process Abstract Text (main result)
     if (response.data.AbstractText) {
-      console.log('Found Abstract Text:', response.data.AbstractText);
       results.push({
         title: response.data.Heading || 'Summary',
         link: response.data.AbstractURL || '',
@@ -1167,29 +1164,19 @@ async function duckDuckGoSearch(query, limit = 5) {
     // Process Related Topics
     if (response.data.RelatedTopics && response.data.RelatedTopics.length > 0) {
       console.log('Found Related Topics:', response.data.RelatedTopics.length);
+      
       response.data.RelatedTopics
         .filter(topic => topic.Text && topic.FirstURL)
         .slice(0, limit - results.length)
         .forEach(topic => {
+          // Clean up the text by removing any trailing "..."
+          const cleanText = topic.Text.replace(/\.{3,}$/, '');
           results.push({
-            title: topic.Text.split(' - ')[0] || topic.Text,
+            title: cleanText.split(' - ')[0] || cleanText,
             link: topic.FirstURL,
-            snippet: topic.Text
+            snippet: cleanText
           });
         });
-    }
-
-    // Process main Results
-    if (results.length < limit && response.data.Results) {
-      console.log('Found Main Results:', response.data.Results.length);
-      const additionalResults = response.data.Results
-        .slice(0, limit - results.length)
-        .map(result => ({
-          title: result.Text.split(' - ')[0] || result.Text,
-          link: result.FirstURL,
-          snippet: result.Text
-        }));
-      results.push(...additionalResults);
     }
 
     console.log('Final Results Count:', results.length);
@@ -1197,7 +1184,7 @@ async function duckDuckGoSearch(query, limit = 5) {
     return {
       success: true,
       query: query,
-      results: results,
+      results: results.slice(0, limit),
       source: 'DuckDuckGo',
       total: results.length
     };
