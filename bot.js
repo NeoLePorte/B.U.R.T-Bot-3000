@@ -1272,11 +1272,10 @@ function getUserIdFromMention(mention) {
   return matches ? matches[1] : null;
 }
 
-// Update the messageCreate handler around lines 913-996
+// Update the messageCreate handler
 client.on('messageCreate', async message => {
   if (message.author.bot) return;
   
-  // Check if bot is mentioned
   if (message.mentions.has(client.user)) {
     const loadingMessage = await message.reply('*[BURT twitches and starts thinking...]* 🤪');
     
@@ -1284,8 +1283,63 @@ client.on('messageCreate', async message => {
       const question = message.content.replace(/<@!?\d+>/g, '').trim();
       console.log(`Processing mention from ${message.author.username}: ${question}`);
 
-      const response = await handleMessage(message, question, false);
+      // Create messages array with proper structure
+      const messages = [
+        { 
+          role: "system", 
+          content: BURT_PROMPT 
+        },
+        {
+          role: "user",
+          content: `[Context: Message from user: ${message.author.username}] ${question}`
+        }
+      ];
+
+      // Initial completion request
+      const completion = await openai.chat.completions.create({
+        model: "grok-beta",
+        messages: messages,
+        max_tokens: 1000,
+        tools: functions,
+        tool_choice: "auto"
+      });
+
+      let response = completion.choices[0].message;
       
+      // If tools were used, add their results to messages
+      if (response.tool_calls) {
+        messages.push(response);
+        
+        for (const toolCall of response.tool_calls) {
+          try {
+            console.log(`Executing tool ${toolCall.function.name} with args:`, toolCall.function.arguments);
+            const args = JSON.parse(toolCall.function.arguments);
+            const result = await executeToolCall(toolCall.function.name, args, message);
+            messages.push({
+              tool_call_id: toolCall.id,
+              role: "tool",
+              content: JSON.stringify(result)
+            });
+          } catch (error) {
+            console.error('Tool execution failed:', error);
+            messages.push({
+              tool_call_id: toolCall.id,
+              role: "tool",
+              content: JSON.stringify({ error: true, message: error.message })
+            });
+          }
+        }
+
+        // Get final response with tool results
+        console.log('Getting final response with tool results...');
+        const nextCompletion = await openai.chat.completions.create({
+          model: "grok-beta",
+          messages: messages,
+          max_tokens: 1000
+        });
+        response = nextCompletion.choices[0].message;
+      }
+
       // Format and send response
       const sanitizedContent = sanitizeResponse(response.content || 'No response');
       const embed = new EmbedBuilder()
