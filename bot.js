@@ -1585,34 +1585,37 @@ function determineToolForQuery(query, mentionedUsers) {
 // Update the message handling function
 async function handleMessage(message, question, isCommand = false) {
   try {
-    // Standardize context message format
+    // Standardize context message format - remove newlines and extra spaces
     const contextMessage = {
       role: "user",
       content: `[Context: ${isCommand ? 'Command' : 'Message'} from user: ${
         isCommand ? message.user.username : message.author.username
-      }]
-      [Channel: ${isCommand ? message.channel.name : message.channel.name}]
-      [Server: ${isCommand ? message.guild.name : message.guild.name}]
-      ${question}`
+      }] [Channel: ${isCommand ? message.channel.name : message.channel.name}] [Server: ${
+        isCommand ? message.guild.name : message.guild.name
+      }] ${question}`.replace(/\s+/g, ' ').trim()
     };
-
-    // Create messages array that we'll build up
-    let messages = [
-      { role: "system", content: BURT_PROMPT },
-      { role: "user", content: contextMessage }
-    ];
 
     // Initial completion request
     const completion = await openai.chat.completions.create({
       model: "grok-beta",
-      messages: messages,
+      messages: [
+        { 
+          role: "system", 
+          content: BURT_PROMPT 
+        },
+        contextMessage
+      ],
       max_tokens: 1000,
       tools: functions,
       tool_choice: "auto"
     });
 
     let response = completion.choices[0].message;
-    messages.push(response); // Add the initial response to messages
+    let messages = [
+      { role: "system", content: BURT_PROMPT },
+      contextMessage,
+      response
+    ];
 
     // Process tool calls if any
     if (response.tool_calls) {
@@ -1621,12 +1624,11 @@ async function handleMessage(message, question, isCommand = false) {
           console.log(`Executing tool ${toolCall.function.name} with args:`, toolCall.function.arguments);
           const args = JSON.parse(toolCall.function.arguments);
           const result = await executeToolCall(toolCall.function.name, args, message);
-          const toolResult = {
+          messages.push({
             tool_call_id: toolCall.id,
             role: "tool",
             content: JSON.stringify(result)
-          };
-          messages.push(toolResult); // Add each tool result to messages
+          });
         } catch (error) {
           console.error('Tool execution failed:', error);
           messages.push({
@@ -1641,7 +1643,7 @@ async function handleMessage(message, question, isCommand = false) {
       console.log('Getting final response with tool results...');
       const nextCompletion = await openai.chat.completions.create({
         model: "grok-beta",
-        messages: messages, // Use the full message history
+        messages: messages,
         max_tokens: 1000
       });
       response = nextCompletion.choices[0].message;
