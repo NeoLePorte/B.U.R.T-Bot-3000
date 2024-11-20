@@ -1568,82 +1568,91 @@ async function fetchUserMessages(channel, userId, limit = 50) {
   return collectedMessages.slice(0, limit);
 }
 
-async function handleUserInput(message, question, isCommand = false) {
+async function handleMessage(message, question, isCommand = false) {
   try {
-    // Prepare context message with mention information
-    const mentionedUsers = Array.from(message.mentions.users.values());
+    // Standardize the context message format
     const contextMessage = {
       role: "user",
-      content: `[Context: ${isCommand ? 'Command' : 'Message'} from user: ${message.author.username} (${message.author.id})]
-                [Mentions: ${mentionedUsers.map(u => `${u.username} (${u.id})`).join(', ')}]
-                ${question}`
+      content: `[Context: ${isCommand ? 'Command' : 'Message'} from user: ${
+        isCommand ? message.user.username : message.author.username
+      } (${isCommand ? message.user.id : message.author.id})]\n${question}`
     };
 
-    // Let the model decide which tools to use
+    // Initial completion request
     const completion = await openai.chat.completions.create({
       model: "grok-beta",
       messages: [
-        { role: "system", content: BURT_PROMPT },
-        { role: "user", content: contextMessage }
+        { 
+          role: "system", 
+          content: BURT_PROMPT + "\nIMPORTANT: Keep responses under 4000 characters." 
+        },
+        contextMessage
       ],
       max_tokens: 1000,
       tools: discordTools,
       tool_choice: "auto"
     });
 
-    return await processToolCallsAndGetResponse(completion, message, contextMessage);
+    let response = completion.choices[0].message;
+    let toolResults = [];
+
+    // Process tool calls if any
+    if (response.tool_calls) {
+      for (const toolCall of response.tool_calls) {
+        try {
+          const args = JSON.parse(toolCall.function.arguments);
+          const result = await executeToolCall(toolCall.function.name, args, message);
+          toolResults.push({
+            tool_call_id: toolCall.id,
+            role: "tool",
+            content: JSON.stringify(result)
+          });
+        } catch (error) {
+          console.error('Tool execution failed:', error);
+          toolResults.push({
+            tool_call_id: toolCall.id,
+            role: "tool",
+            content: JSON.stringify({ error: true, message: error.message })
+          });
+        }
+      }
+
+      // Get final response with tool results
+      if (toolResults.length > 0) {
+        const nextCompletion = await openai.chat.completions.create({
+          model: "grok-beta",
+          messages: [
+            { role: "system", content: BURT_PROMPT },
+            contextMessage,
+            response,
+            ...toolResults
+          ],
+          max_tokens: 1000
+        });
+        response = nextCompletion.choices[0].message;
+      }
+    }
+
+    return response;
   } catch (error) {
-    console.error('Error in handleUserInput:', error);
+    console.error('Error in handleMessage:', error);
     throw error;
   }
 }
 
-// Update the default limit in determineToolForQuery
-function determineToolForQuery(query, mentionedUsers) {
-  // If there are mentioned users, use getUserInfo
-  if (mentionedUsers && mentionedUsers.length > 0) {
-    return {
-      name: 'getUserInfo',
-      arguments: {
-        userId: mentionedUsers[0].id
-      }
-    };
+// Update both event handlers to use the same function
+client.on('messageCreate', async message => {
+  if (message.mentions.has(client.user)) {
+    const question = message.content.replace(/<@!\d+>/, '').trim();
+    const response = await handleMessage(message, question, false);
+    // ... rest of message handling
   }
-  
-  // Default to getting recent messages for context first
-  const baseContext = {
-    name: 'getRecentMessages',
-    arguments: {
-      limit: 100  // Increased from 10 to 100 for better context
-    }
-  };
+});
 
-  // Then check for specific queries that might need additional tools
-  const lowerQuery = query.toLowerCase();
-  
-  if (lowerQuery.includes('frank') || 
-      lowerQuery.includes('fishtank') || 
-      lowerQuery.includes('stream')) {
-    return {
-      name: 'searchTweets',
-      arguments: {
-        limit: 5,
-        sort_order: 'recency'
-      }
-    };
+client.on('interactionCreate', async interaction => {
+  if (interaction.isChatInputCommand()) {
+    const question = interaction.options.getString('question');
+    const response = await handleMessage(interaction, question, true);
+    // ... rest of interaction handling
   }
-  
-  if (lowerQuery.includes('search') || 
-      lowerQuery.includes('find') || 
-      lowerQuery.includes('what is')) {
-    return {
-      name: 'webSearch',
-      arguments: {
-        query: query,
-        limit: 3
-      }
-    };
-  }
-  
-  return baseContext;
-}
+});
