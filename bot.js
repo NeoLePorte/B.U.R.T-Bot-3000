@@ -947,93 +947,95 @@ client.on('error', error => {
 // Login
 client.login(process.env.DISCORD_TOKEN); 
 
-// Define the base functions first
+// Define the tools with proper type field
 const functions = [
   {
-    name: "getUserInfo",
-    description: "Get information about a Discord user",
-    parameters: {
-      type: "object",
-      properties: {
-        userId: {
-          type: "string",
-          description: "The Discord user ID to look up",
-          example_value: "123456789"
-        }
-      },
-      required: ["userId"],
-      optional: []
-    }
-  },
-  {
-    name: "getRecentMessages",
-    description: "Get recent messages from the channel",
-    parameters: {
-      type: "object",
-      properties: {
-        limit: {
-          type: "number",
-          description: "Number of messages to fetch (default: 50, max: 100)",
-          default: 50,
-          minimum: 1,
-          maximum: 100
-        }
-      },
-      required: [],
-      optional: ["limit"]
-    }
-  },
-  {
-    name: "getChannelInfo",
-    description: "Get information about the current channel",
-    parameters: {
-      type: "object",
-      properties: {},
-      required: [],
-      optional: []
-    }
-  },
-  {
-    name: "searchTweets",
-    description: "Search recent tweets containing #fishtanklive",
-    parameters: {
-      type: "object",
-      properties: {
-        limit: {
-          type: "number",
-          description: "Number of tweets to return (min: 10, max: 100)",
-          default: 10,
-          minimum: 10,
-          maximum: 100
+    type: "function",
+    function: {
+      name: "getRecentMessages",
+      description: "Fetches recent messages from the channel for context",
+      parameters: {
+        type: "object",
+        properties: {
+          limit: {
+            type: "number",
+            description: "Number of messages to fetch (default: 50, max: 100)"
+          }
         },
-        sort_order: {
-          type: "string",
-          enum: ["recency", "relevancy"],
-          description: "Sort tweets by recency or relevancy",
-          default: "recency"
-        }
+        required: []
       }
     }
   },
   {
-    name: "webSearch",
-    description: "Search the web for information using DuckDuckGo",
-    parameters: {
-      type: "object",
-      properties: {
-        query: {
-          type: "string",
-          description: "The search query to look up",
+    type: "function",
+    function: {
+      name: "getUserInfo",
+      description: "Gets information about a Discord user",
+      parameters: {
+        type: "object",
+        properties: {
+          userId: {
+            type: "string",
+            description: "Discord user ID"
+          }
         },
-        limit: {
-          type: "number",
-          description: "Number of results to return (default: 5, max: 10)",
-          default: 5,
-          minimum: 1,
-          maximum: 10
-        }
-      },
-      required: ["query"]
+        required: ["userId"]
+      }
+    }
+  },
+  {
+    type: "function",
+    function: {
+      name: "getChannelInfo",
+      description: "Gets information about the current Discord channel",
+      parameters: {
+        type: "object",
+        properties: {},
+        required: []
+      }
+    }
+  },
+  {
+    type: "function",
+    function: {
+      name: "searchTweets",
+      description: "Searches recent tweets about #fishtanklive",
+      parameters: {
+        type: "object",
+        properties: {
+          limit: {
+            type: "number",
+            description: "Number of tweets to return"
+          },
+          sort_order: {
+            type: "string",
+            description: "Sort order for tweets",
+            enum: ["recency", "relevancy"]
+          }
+        },
+        required: []
+      }
+    }
+  },
+  {
+    type: "function",
+    function: {
+      name: "webSearch",
+      description: "Search the web for information",
+      parameters: {
+        type: "object",
+        properties: {
+          query: {
+            type: "string",
+            description: "Search query"
+          },
+          limit: {
+            type: "number",
+            description: "Number of results to return (default: 5)"
+          }
+        },
+        required: ["query"]
+      }
     }
   }
 ];
