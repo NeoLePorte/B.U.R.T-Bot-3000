@@ -1208,54 +1208,48 @@ async function duckDuckGoSearch(query, limit = 5) {
 // Then define executeToolCall after all the tool functions are defined
 async function executeToolCall(name, args, context) {
   try {
+    console.log(`Executing tool ${name} with args:`, args);
+    
     switch (name) {
       case 'getUserInfo':
-        return await getDiscordUserInfo(client, args.userId);
+        // Make sure we're using the actual Discord ID
+        const userId = args.userId.replace(/[<@!>]/g, '');
+        if (!userId.match(/^\d+$/)) {
+          console.log('Invalid user ID format:', userId);
+          return {
+            error: true,
+            message: 'Invalid user ID format',
+            details: 'User ID must be a Discord snowflake'
+          };
+        }
+        return await getDiscordUserInfo(client, userId);
+
       case 'getRecentMessages':
         const channel = context.channel;
         return await getRecentMessages(channel, args.limit || 50);
+
       case 'getChannelInfo':
         return await getChannelInfo(context.channel);
+
       case 'searchTweets':
-        return await searchTweets(args);
-      case 'webSearch':
-        console.log('\n=== WebSearch Tool Called ===');
-        console.log('Query:', args.query);
-        console.log('Requested Limit:', args.limit);
-        
-        if (!args.query) {
-          console.log('Error: No search query provided');
+        if (!canMakeTwitterRequest()) {
           return {
             error: true,
-            message: 'Search failed',
-            details: 'No search query provided'
+            message: 'Rate limit exceeded',
+            details: 'Please try again later'
           };
         }
-        
-        const searchLimit = Math.min(Math.max(1, args.limit || 5), 10);
-        console.log('Final Search Limit:', searchLimit);
-        
-        const results = await duckDuckGoSearch(args.query, searchLimit);
-        console.log('Search Results:', JSON.stringify(results, null, 2));
-        
-        if (results.error) {
-          return results;
+        return await searchTweets(args);
+
+      case 'webSearch':
+        if (!args.query) {
+          return {
+            error: true,
+            message: 'No search query provided'
+          };
         }
+        return await duckDuckGoSearch(args.query, args.limit);
 
-        // Format the results for better readability
-        const formattedResults = {
-          query: results.query,
-          source: 'DuckDuckGo',
-          total_results: results.total,
-          results: results.results.map(r => ({
-            title: r.title,
-            link: r.link,
-            snippet: r.snippet.length > 200 ? r.snippet.substring(0, 200) + '...' : r.snippet
-          }))
-        };
-
-        console.log('Formatted Results:', JSON.stringify(formattedResults, null, 2));
-        return formattedResults;
       default:
         throw new Error(`Unknown tool: ${name}`);
     }
@@ -1289,12 +1283,13 @@ client.on('messageCreate', async message => {
       console.log(`Processing mention from ${message.author.username}: ${question}`);
 
       // Initial completion request with context
-      const contextMessage = `
-        [Context: Message from user: ${message.author.username}]
-        [Channel: ${message.channel.name}]
-        [Server: ${message.guild.name}]
-        ${question}
-      `;
+      const contextMessage = {
+        role: "user",
+        content: `[Context: Message from user: ${message.author.username} (${message.author.id})]
+          [Channel: ${message.channel.name}]
+          [Server: ${message.guild.name}]
+          ${question}`
+      };
 
       console.log('\n=== Initial Completion Request ===');
       const completion = await openai.chat.completions.create({
@@ -1571,4 +1566,72 @@ async function fetchUserMessages(channel, userId, limit = 50) {
 
   // Return only the requested number of messages
   return collectedMessages.slice(0, limit);
+}
+
+async function handleUserInput(message, question, isCommand = false) {
+  try {
+    // 1. Get initial context
+    const contextMessage = {
+      role: "user",
+      content: `[Context: ${isCommand ? 'Command' : 'Message'} from user: ${message.author.username} (${message.author.id})]\n${question}`
+    };
+
+    // 2. Get recent messages for context
+    const recentMessages = await getRecentMessages(message.channel, 10);
+    const messagesContext = {
+      role: "system",
+      content: `Recent channel context:\n${JSON.stringify(recentMessages)}`
+    };
+
+    // 3. Make initial completion request with context
+    const completion = await openai.chat.completions.create({
+      model: "grok-beta",
+      messages: [
+        { role: "system", content: BURT_PROMPT },
+        messagesContext,
+        contextMessage
+      ],
+      max_tokens: 1000,
+      tools: discordTools,
+      tool_choice: "auto"
+    });
+
+    // 4. Process any tool calls before final response
+    let response = completion.choices[0].message;
+    let toolResults = [];
+
+    if (response.tool_calls) {
+      for (const toolCall of response.tool_calls) {
+        const result = await executeToolCall(toolCall.function.name, 
+          JSON.parse(toolCall.function.arguments), 
+          message);
+        
+        toolResults.push({
+          tool_call_id: toolCall.id,
+          role: "tool",
+          content: JSON.stringify(result)
+        });
+      }
+
+      // 5. Get final response with tool results included
+      const finalCompletion = await openai.chat.completions.create({
+        model: "grok-beta",
+        messages: [
+          { role: "system", content: BURT_PROMPT },
+          messagesContext,
+          contextMessage,
+          response,
+          ...toolResults
+        ],
+        max_tokens: 1000
+      });
+
+      response = finalCompletion.choices[0].message;
+    }
+
+    return response;
+  } catch (error) {
+    console.error('Error in handleUserInput:', error);
+    throw error;
+  }
 }
