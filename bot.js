@@ -762,7 +762,7 @@ client.on('interactionCreate', async interaction => {
               }
             ],
             max_tokens: 1000,
-            tools: discordTools,
+            tools: functions,
             tool_choice: "auto"
           });
 
@@ -1279,77 +1279,11 @@ client.on('messageCreate', async message => {
     const loadingMessage = await message.reply('*[BURT twitches and starts thinking...]* 🤪');
     
     try {
-      const question = message.content.replace(`<@${client.user.id}>`, '').trim();
+      const question = message.content.replace(/<@!?\d+>/g, '').trim();
       console.log(`Processing mention from ${message.author.username}: ${question}`);
 
-      // Initial completion request with context
-      const contextMessage = {
-        role: "user",
-        content: `[Context: Message from user: ${message.author.username} (${message.author.id})]
-          [Channel: ${message.channel.name}]
-          [Server: ${message.guild.name}]
-          ${question}`
-      };
-
-      console.log('\n=== Initial Completion Request ===');
-      const completion = await openai.chat.completions.create({
-        model: "grok-beta",
-        messages: [
-          { role: "system", content: BURT_PROMPT },
-          { role: "user", content: contextMessage }
-        ],
-        max_tokens: 1000,
-        tools: discordTools,
-        tool_choice: "auto"
-      });
-
-      let response = completion.choices[0].message;
-      console.log('\nInitial Response:', JSON.stringify(response, null, 2));
-
-      // Handle tool calls
-      let toolResults = [];
-      if (response.tool_calls) {
-        console.log('\n=== Processing Tool Calls ===');
-        for (const toolCall of response.tool_calls) {
-          console.log(`\nExecuting Tool: ${toolCall.function.name}`);
-          console.log(`Arguments: ${toolCall.function.arguments}`);
-          
-          try {
-            const args = JSON.parse(toolCall.function.arguments);
-            const result = await executeToolCall(toolCall.function.name, args, message);
-            console.log(`Tool Result:`, result);
-            
-            toolResults.push({
-              tool_call_id: toolCall.id,
-              role: "tool",
-              content: JSON.stringify(result)
-            });
-          } catch (error) {
-            console.error(`Tool execution failed for ${toolCall.function.name}:`, error);
-          }
-        }
-      }
-
-      // Get final response with tool results
-      if (toolResults.length > 0) {
-        console.log('\n=== Getting Final Response ===');
-        const messages = [
-          { role: "system", content: BURT_PROMPT },
-          { role: "user", content: contextMessage },
-          response,
-          ...toolResults
-        ];
-        
-        const nextCompletion = await openai.chat.completions.create({
-          model: "grok-beta",
-          messages: messages,
-          max_tokens: 1000
-        });
-
-        response = nextCompletion.choices[0].message;
-        console.log('Final Response:', JSON.stringify(response, null, 2));
-      }
-
+      const response = await handleMessage(message, question, false);
+      
       // Format and send response
       const sanitizedContent = sanitizeResponse(response.content || 'No response');
       const embed = new EmbedBuilder()
@@ -1568,48 +1502,134 @@ async function fetchUserMessages(channel, userId, limit = 50) {
   return collectedMessages.slice(0, limit);
 }
 
+async function handleUserInput(message, question, isCommand = false) {
+  try {
+    // Prepare context message with mention information
+    const mentionedUsers = Array.from(message.mentions.users.values());
+    const contextMessage = {
+      role: "user",
+      content: `[Context: ${isCommand ? 'Command' : 'Message'} from user: ${message.author.username} (${message.author.id})]
+                [Mentions: ${mentionedUsers.map(u => `${u.username} (${u.id})`).join(', ')}]
+                ${question}`
+    };
+
+    // Let the model decide which tools to use
+    const completion = await openai.chat.completions.create({
+      model: "grok-beta",
+      messages: [
+        { role: "system", content: BURT_PROMPT },
+        { role: "user", content: contextMessage }
+      ],
+      max_tokens: 1000,
+      tools: functions,  // Use the functions array we already defined
+      tool_choice: "auto"
+    });
+
+    return await processToolCallsAndGetResponse(completion, message, contextMessage);
+  } catch (error) {
+    console.error('Error in handleUserInput:', error);
+    throw error;
+  }
+}
+
+// Update the default limit in determineToolForQuery
+function determineToolForQuery(query, mentionedUsers) {
+  // If there are mentioned users, use getUserInfo
+  if (mentionedUsers && mentionedUsers.length > 0) {
+    return {
+      name: 'getUserInfo',
+      arguments: {
+        userId: mentionedUsers[0].id
+      }
+    };
+  }
+  
+  // Default to getting recent messages for context first
+  const baseContext = {
+    name: 'getRecentMessages',
+    arguments: {
+      limit: 100  // Increased from 10 to 100 for better context
+    }
+  };
+
+  // Then check for specific queries that might need additional tools
+  const lowerQuery = query.toLowerCase();
+  
+  if (lowerQuery.includes('frank') || 
+      lowerQuery.includes('fishtank') || 
+      lowerQuery.includes('stream')) {
+    return {
+      name: 'searchTweets',
+      arguments: {
+        limit: 5,
+        sort_order: 'recency'
+      }
+    };
+  }
+  
+  if (lowerQuery.includes('search') || 
+      lowerQuery.includes('find') || 
+      lowerQuery.includes('what is')) {
+    return {
+      name: 'webSearch',
+      arguments: {
+        query: query,
+        limit: 3
+      }
+    };
+  }
+  
+  return baseContext;
+}
+
+// Update the message handling function
 async function handleMessage(message, question, isCommand = false) {
   try {
-    // Standardize the context message format
+    // Standardize context message format
     const contextMessage = {
       role: "user",
       content: `[Context: ${isCommand ? 'Command' : 'Message'} from user: ${
         isCommand ? message.user.username : message.author.username
-      } (${isCommand ? message.user.id : message.author.id})]\n${question}`
+      }]
+      [Channel: ${isCommand ? message.channel.name : message.channel.name}]
+      [Server: ${isCommand ? message.guild.name : message.guild.name}]
+      ${question}`
     };
+
+    // Create messages array that we'll build up
+    let messages = [
+      { role: "system", content: BURT_PROMPT },
+      { role: "user", content: contextMessage }
+    ];
 
     // Initial completion request
     const completion = await openai.chat.completions.create({
       model: "grok-beta",
-      messages: [
-        { 
-          role: "system", 
-          content: BURT_PROMPT + "\nIMPORTANT: Keep responses under 4000 characters." 
-        },
-        contextMessage
-      ],
+      messages: messages,
       max_tokens: 1000,
-      tools: discordTools,
+      tools: functions,
       tool_choice: "auto"
     });
 
     let response = completion.choices[0].message;
-    let toolResults = [];
+    messages.push(response); // Add the initial response to messages
 
     // Process tool calls if any
     if (response.tool_calls) {
       for (const toolCall of response.tool_calls) {
         try {
+          console.log(`Executing tool ${toolCall.function.name} with args:`, toolCall.function.arguments);
           const args = JSON.parse(toolCall.function.arguments);
           const result = await executeToolCall(toolCall.function.name, args, message);
-          toolResults.push({
+          const toolResult = {
             tool_call_id: toolCall.id,
             role: "tool",
             content: JSON.stringify(result)
-          });
+          };
+          messages.push(toolResult); // Add each tool result to messages
         } catch (error) {
           console.error('Tool execution failed:', error);
-          toolResults.push({
+          messages.push({
             tool_call_id: toolCall.id,
             role: "tool",
             content: JSON.stringify({ error: true, message: error.message })
@@ -1617,20 +1637,14 @@ async function handleMessage(message, question, isCommand = false) {
         }
       }
 
-      // Get final response with tool results
-      if (toolResults.length > 0) {
-        const nextCompletion = await openai.chat.completions.create({
-          model: "grok-beta",
-          messages: [
-            { role: "system", content: BURT_PROMPT },
-            contextMessage,
-            response,
-            ...toolResults
-          ],
-          max_tokens: 1000
-        });
-        response = nextCompletion.choices[0].message;
-      }
+      // Get final response with all context and tool results
+      console.log('Getting final response with tool results...');
+      const nextCompletion = await openai.chat.completions.create({
+        model: "grok-beta",
+        messages: messages, // Use the full message history
+        max_tokens: 1000
+      });
+      response = nextCompletion.choices[0].message;
     }
 
     return response;
@@ -1639,20 +1653,3 @@ async function handleMessage(message, question, isCommand = false) {
     throw error;
   }
 }
-
-// Update both event handlers to use the same function
-client.on('messageCreate', async message => {
-  if (message.mentions.has(client.user)) {
-    const question = message.content.replace(/<@!\d+>/, '').trim();
-    const response = await handleMessage(message, question, false);
-    // ... rest of message handling
-  }
-});
-
-client.on('interactionCreate', async interaction => {
-  if (interaction.isChatInputCommand()) {
-    const question = interaction.options.getString('question');
-    const response = await handleMessage(interaction, question, true);
-    // ... rest of interaction handling
-  }
-});
