@@ -1570,20 +1570,25 @@ async function fetchUserMessages(channel, userId, limit = 50) {
 
 async function handleUserInput(message, question, isCommand = false) {
   try {
-    // 1. Get initial context
-    const contextMessage = {
-      role: "user",
-      content: `[Context: ${isCommand ? 'Command' : 'Message'} from user: ${message.author.username} (${message.author.id})]\n${question}`
-    };
-
-    // 2. Get recent messages for context
-    const recentMessages = await getRecentMessages(message.channel, 10);
+    // 1. Get initial context with 100 messages
+    const recentMessages = await getRecentMessages(message.channel, 100);
     const messagesContext = {
       role: "system",
       content: `Recent channel context:\n${JSON.stringify(recentMessages)}`
     };
 
-    // 3. Make initial completion request with context
+    // 2. Check for mentions in the message
+    const mentionedUsers = Array.from(message.mentions.users.values());
+    
+    // 3. Prepare context message with mention information
+    const contextMessage = {
+      role: "user",
+      content: `[Context: ${isCommand ? 'Command' : 'Message'} from user: ${message.author.username} (${message.author.id})]
+                [Mentions: ${mentionedUsers.map(u => `${u.username} (${u.id})`).join(', ')}]
+                ${question}`
+    };
+
+    // 4. Make initial completion request with context
     const completion = await openai.chat.completions.create({
       model: "grok-beta",
       messages: [
@@ -1596,42 +1601,59 @@ async function handleUserInput(message, question, isCommand = false) {
       tool_choice: "auto"
     });
 
-    // 4. Process any tool calls before final response
-    let response = completion.choices[0].message;
-    let toolResults = [];
-
-    if (response.tool_calls) {
-      for (const toolCall of response.tool_calls) {
-        const result = await executeToolCall(toolCall.function.name, 
-          JSON.parse(toolCall.function.arguments), 
-          message);
-        
-        toolResults.push({
-          tool_call_id: toolCall.id,
-          role: "tool",
-          content: JSON.stringify(result)
-        });
-      }
-
-      // 5. Get final response with tool results included
-      const finalCompletion = await openai.chat.completions.create({
-        model: "grok-beta",
-        messages: [
-          { role: "system", content: BURT_PROMPT },
-          messagesContext,
-          contextMessage,
-          response,
-          ...toolResults
-        ],
-        max_tokens: 1000
-      });
-
-      response = finalCompletion.choices[0].message;
-    }
-
-    return response;
+    return await processToolCallsAndGetResponse(completion, message, messagesContext, contextMessage);
   } catch (error) {
     console.error('Error in handleUserInput:', error);
     throw error;
   }
+}
+
+// Update the default limit in determineToolForQuery
+function determineToolForQuery(query, mentionedUsers) {
+  // If there are mentioned users, use getUserInfo
+  if (mentionedUsers && mentionedUsers.length > 0) {
+    return {
+      name: 'getUserInfo',
+      arguments: {
+        userId: mentionedUsers[0].id
+      }
+    };
+  }
+  
+  // Default to getting recent messages for context first
+  const baseContext = {
+    name: 'getRecentMessages',
+    arguments: {
+      limit: 100  // Increased from 10 to 100 for better context
+    }
+  };
+
+  // Then check for specific queries that might need additional tools
+  const lowerQuery = query.toLowerCase();
+  
+  if (lowerQuery.includes('frank') || 
+      lowerQuery.includes('fishtank') || 
+      lowerQuery.includes('stream')) {
+    return {
+      name: 'searchTweets',
+      arguments: {
+        limit: 5,
+        sort_order: 'recency'
+      }
+    };
+  }
+  
+  if (lowerQuery.includes('search') || 
+      lowerQuery.includes('find') || 
+      lowerQuery.includes('what is')) {
+    return {
+      name: 'webSearch',
+      arguments: {
+        query: query,
+        limit: 3
+      }
+    };
+  }
+  
+  return baseContext;
 }
