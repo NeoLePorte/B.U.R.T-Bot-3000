@@ -1285,23 +1285,23 @@ client.on('messageCreate', async message => {
     const loadingMessage = await message.reply('*[BURT twitches and starts thinking...]* 🤪');
     
     try {
-      // Extract the question (remove the mention)
       const question = message.content.replace(`<@${client.user.id}>`, '').trim();
       console.log(`Processing mention from ${message.author.username}: ${question}`);
 
-      // Initial completion request
+      // Initial completion request with context
+      const contextMessage = `
+        [Context: Message from user: ${message.author.username}]
+        [Channel: ${message.channel.name}]
+        [Server: ${message.guild.name}]
+        ${question}
+      `;
+
       console.log('\n=== Initial Completion Request ===');
       const completion = await openai.chat.completions.create({
         model: "grok-beta",
         messages: [
-          { 
-            role: "system", 
-            content: BURT_PROMPT + "\nIMPORTANT: Keep responses under 4000 characters." 
-          },
-          { 
-            role: "user", 
-            content: `[Context: Message from user: ${message.author.username}]\n${question}` 
-          }
+          { role: "system", content: BURT_PROMPT },
+          { role: "user", content: contextMessage }
         ],
         max_tokens: 1000,
         tools: discordTools,
@@ -1316,43 +1316,34 @@ client.on('messageCreate', async message => {
       if (response.tool_calls) {
         console.log('\n=== Processing Tool Calls ===');
         for (const toolCall of response.tool_calls) {
-          console.log(`\nTool: ${toolCall.function.name}`);
+          console.log(`\nExecuting Tool: ${toolCall.function.name}`);
           console.log(`Arguments: ${toolCall.function.arguments}`);
+          
           try {
             const args = JSON.parse(toolCall.function.arguments);
             const result = await executeToolCall(toolCall.function.name, args, message);
+            console.log(`Tool Result:`, result);
+            
             toolResults.push({
               tool_call_id: toolCall.id,
               role: "tool",
               content: JSON.stringify(result)
             });
           } catch (error) {
-            console.error('Tool execution failed:', error);
-            toolResults.push({
-              tool_call_id: toolCall.id,
-              role: "tool",
-              content: JSON.stringify({ error: true, message: error.message })
-            });
+            console.error(`Tool execution failed for ${toolCall.function.name}:`, error);
           }
         }
       }
 
       // Get final response with tool results
       if (toolResults.length > 0) {
+        console.log('\n=== Getting Final Response ===');
         const messages = [
-          { 
-            role: "system", 
-            content: BURT_PROMPT 
-          },
-          { 
-            role: "user", 
-            content: `[Context: Message from user: ${message.author.username}]\n${question}`
-          },
+          { role: "system", content: BURT_PROMPT },
+          { role: "user", content: contextMessage },
           response,
           ...toolResults
         ];
-        
-        console.log('Messages for final completion:', JSON.stringify(messages, null, 2));
         
         const nextCompletion = await openai.chat.completions.create({
           model: "grok-beta",
@@ -1361,9 +1352,10 @@ client.on('messageCreate', async message => {
         });
 
         response = nextCompletion.choices[0].message;
+        console.log('Final Response:', JSON.stringify(response, null, 2));
       }
 
-      // Send final response
+      // Format and send response
       const sanitizedContent = sanitizeResponse(response.content || 'No response');
       const embed = new EmbedBuilder()
         .setTitle('🤪 BURT Speaks! ')
@@ -1374,13 +1366,10 @@ client.on('messageCreate', async message => {
         })
         .setTimestamp();
 
-      await loadingMessage.edit({ 
-        content: null, 
-        embeds: [embed] 
-      });
+      await loadingMessage.edit({ content: null, embeds: [embed] });
 
     } catch (error) {
-      console.error('Error processing mention:', error);
+      console.error('Error in message handler:', error);
       await loadingMessage.edit('*[BURT has a mental breakdown]* Sorry, something went wrong in my head! 😵');
     }
   }
