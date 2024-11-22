@@ -1335,6 +1335,17 @@ async function executeToolCall(name, args, context) {
 
       case 'analyzeImage':
         try {
+          const images = getMessageImages(context.message);
+          console.log('Available images:', images);
+
+          if (!images.length) {
+            console.log('No images found to analyze');
+            return { error: true, message: "No images found in message to analyze" };
+          }
+
+          const imageUrl = images[0]; // Use first available image
+          console.log('Analyzing image:', imageUrl);
+          
           const imageCompletion = await openai.chat.completions.create({
             model: "grok-vision-beta",
             messages: [
@@ -1345,7 +1356,7 @@ async function executeToolCall(name, args, context) {
                   {
                     type: "image_url",
                     image_url: {
-                      url: args.imageUrl,
+                      url: imageUrl,
                       detail: "high"
                     }
                   },
@@ -1358,9 +1369,10 @@ async function executeToolCall(name, args, context) {
             ],
             max_tokens: 1000
           });
+          
           return { 
-            description: completion.choices[0].message.content,
-            imageUrl: args.imageUrl
+            description: imageCompletion.choices[0].message.content,
+            imageUrl: imageUrl
           };
         } catch (error) {
           console.error('Error analyzing image:', error);
@@ -1765,8 +1777,8 @@ function logMessageImages(message) {
     console.log('Found attachments:', message.attachments.size);
     message.attachments.forEach(attachment => {
       if (attachment.contentType?.startsWith('image/')) {
-        console.log('Found image attachment:', attachment.url);
-        images.push(attachment.url);
+        console.log('Found image attachment:', attachment.proxyURL); // Use proxyURL for better reliability
+        images.push(attachment.proxyURL);
       }
     });
   }
@@ -1776,8 +1788,12 @@ function logMessageImages(message) {
     console.log('Found embeds:', message.embeds.length);
     message.embeds.forEach(embed => {
       if (embed.image) {
-        console.log('Found embed image:', embed.image.url);
-        images.push(embed.image.url);
+        console.log('Found embed image:', embed.image.proxyURL);
+        images.push(embed.image.proxyURL);
+      }
+      if (embed.thumbnail) {
+        console.log('Found embed thumbnail:', embed.thumbnail.proxyURL);
+        images.push(embed.thumbnail.proxyURL);
       }
     });
   }
