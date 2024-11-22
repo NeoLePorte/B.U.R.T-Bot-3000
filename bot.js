@@ -1757,35 +1757,79 @@ function determineToolForQuery(query, mentionedUsers) {
 // Update the message handling function
 async function handleMessage(message, question, isCommand = false) {
   try {
-    let content = [];
+    // Get images from message
+    let images = [];
     
-    // Handle attached images
+    // Check attachments
     if (message.attachments.size > 0) {
-      for (const [_, attachment] of message.attachments) {
-        if (attachment.contentType?.startsWith('image/')) {
-          content.push({
-            type: "image_url",
-            image_url: {
-              url: attachment.url,
-              detail: "high"
-            }
-          });
-        }
-      }
+      images = [...message.attachments.values()]
+        .filter(attachment => attachment.contentType?.startsWith('image/'))
+        .map(attachment => attachment.url);
     }
     
-    // Add text content
-    content.push({
-      type: "text",
-      text: `[Context: ${isCommand ? 'Command' : 'Message'} from user: ${
-        getDisplayName(message, isCommand)
-      }] ${question}`
-    });
+    // Check for image URLs in message content
+    const urlRegex = /(https?:\/\/[^\s]+\.(jpg|jpeg|png|gif|webp))/gi;
+    const contentUrls = [...question.matchAll(urlRegex)].map(match => match[0]);
+    images = [...images, ...contentUrls];
 
+    // Create messages array with proper structure
     const messages = [
       { role: "system", content: BURT_PROMPT },
-      { role: "user", content: content }
+      {
+        role: "user",
+        content: `[Context: Message from user: ${getDisplayName(message, isCommand)}] ${question}\n${
+          images.length > 0 ? `[Attached Images: ${images.join(', ')}]` : ''
+        }`
+      }
     ];
+
+    // Update executeToolCall for analyzeImage
+    async function executeToolCall(name, args, message) {
+      switch (name) {
+        case 'analyzeImage':
+          try {
+            // Use actual image URL from message if available
+            const imageUrl = images.find(url => url.includes(args.imageUrl)) || images[0];
+            if (!imageUrl) {
+              return { error: true, message: "No valid image found in message" };
+            }
+
+            const imageCompletion = await openai.chat.completions.create({
+              model: "grok-vision-beta",
+              messages: [
+                { role: "system", content: BURT_PROMPT },
+                { 
+                  role: "user", 
+                  content: [
+                    {
+                      type: "image_url",
+                      image_url: {
+                        url: imageUrl,
+                        detail: "high"
+                      }
+                    },
+                    {
+                      type: "text",
+                      text: args.question || "What do you see in this image?"
+                    }
+                  ]
+                }
+              ],
+              max_tokens: 1000
+            });
+            
+            return { 
+              description: imageCompletion.choices[0].message.content,
+              imageUrl: imageUrl
+            };
+          } catch (error) {
+            console.error('Error analyzing image:', error);
+            return { error: true, message: error.message };
+          }
+          break;
+        // ... other cases ...
+      }
+    }
 
     return await handleStreamingResponse(messages, message, isCommand);
   } catch (error) {
