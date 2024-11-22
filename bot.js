@@ -1769,35 +1769,36 @@ function determineToolForQuery(query, mentionedUsers) {
 // Add this helper function to log available images
 function logMessageImages(message) {
   console.log('Checking message for images...');
-  
   const images = [];
   
-  // Check attachments
+  // Check attachments - Discord CDN URLs
   if (message.attachments.size > 0) {
     console.log('Found attachments:', message.attachments.size);
     message.attachments.forEach(attachment => {
       if (attachment.contentType?.startsWith('image/')) {
-        console.log('Found image attachment:', attachment.proxyURL); // Use proxyURL for better reliability
-        images.push(attachment.proxyURL);
+        // Use url property for direct CDN link
+        console.log('Found image attachment:', attachment.url);
+        images.push(attachment.url);
       }
     });
   }
   
-  // Check embeds
+  // Check embeds - Discord CDN URLs
   if (message.embeds.length > 0) {
     console.log('Found embeds:', message.embeds.length);
     message.embeds.forEach(embed => {
       if (embed.image) {
-        console.log('Found embed image:', embed.image.proxyURL);
-        images.push(embed.image.proxyURL);
+        console.log('Found embed image:', embed.image.url);
+        images.push(embed.image.url);
       }
       if (embed.thumbnail) {
-        console.log('Found embed thumbnail:', embed.thumbnail.proxyURL);
-        images.push(embed.thumbnail.proxyURL);
+        console.log('Found embed thumbnail:', embed.thumbnail.url);
+        images.push(embed.thumbnail.url);
       }
     });
   }
 
+  console.log('Total images found:', images.length);
   return images;
 }
 
@@ -1849,20 +1850,20 @@ async function handleMessage(message, question, isCommand = false) {
       switch (name) {
         case 'analyzeImage':
           try {
-            if (!imageContext.availableImages.length) {
-              console.log('No images found to analyze');
+            const availableImages = logMessageImages(message);
+            if (!availableImages.length) {
               return { error: true, message: "No images found in message to analyze" };
             }
 
-            const imageUrl = imageContext.availableImages[0];
-            console.log('Analyzing image:', imageUrl);
+            const imageUrl = availableImages[0];
+            console.log('Analyzing image with URL:', imageUrl);
             
+            // Following xAI docs format exactly
             const imageCompletion = await openai.chat.completions.create({
               model: "grok-vision-beta",
               messages: [
-                { role: "system", content: BURT_PROMPT },
-                { 
-                  role: "user", 
+                {
+                  role: "user",
                   content: [
                     {
                       type: "image_url",
@@ -1878,7 +1879,8 @@ async function handleMessage(message, question, isCommand = false) {
                   ]
                 }
               ],
-              max_tokens: 1000
+              stream: false,
+              temperature: 0.01
             });
             
             return { 
