@@ -1754,31 +1754,50 @@ function determineToolForQuery(query, mentionedUsers) {
   return baseContext;
 }
 
-// Update the message handling function
+// Add this helper function to log available images
+function logMessageImages(message) {
+  console.log('Checking message for images...');
+  
+  const images = [];
+  
+  // Check attachments
+  if (message.attachments.size > 0) {
+    console.log('Found attachments:', message.attachments.size);
+    message.attachments.forEach(attachment => {
+      if (attachment.contentType?.startsWith('image/')) {
+        console.log('Found image attachment:', attachment.url);
+        images.push(attachment.url);
+      }
+    });
+  }
+  
+  // Check embeds
+  if (message.embeds.length > 0) {
+    console.log('Found embeds:', message.embeds.length);
+    message.embeds.forEach(embed => {
+      if (embed.image) {
+        console.log('Found embed image:', embed.image.url);
+        images.push(embed.image.url);
+      }
+    });
+  }
+
+  return images;
+}
+
+// Update handleMessage
 async function handleMessage(message, question, isCommand = false) {
   try {
-    // Get images from message
-    let images = [];
-    
-    // Check attachments
-    if (message.attachments.size > 0) {
-      images = [...message.attachments.values()]
-        .filter(attachment => attachment.contentType?.startsWith('image/'))
-        .map(attachment => attachment.url);
-    }
-    
-    // Check for image URLs in message content
-    const urlRegex = /(https?:\/\/[^\s]+\.(jpg|jpeg|png|gif|webp))/gi;
-    const contentUrls = [...question.matchAll(urlRegex)].map(match => match[0]);
-    images = [...images, ...contentUrls];
+    // Get available images
+    const availableImages = logMessageImages(message);
+    console.log('Available images:', availableImages);
 
-    // Create messages array with proper structure
     const messages = [
       { role: "system", content: BURT_PROMPT },
       {
         role: "user",
-        content: `[Context: Message from user: ${getDisplayName(message, isCommand)}] ${question}\n${
-          images.length > 0 ? `[Attached Images: ${images.join(', ')}]` : ''
+        content: `[Context: Message from user: ${getDisplayName(message, isCommand)}] ${question}${
+          availableImages.length > 0 ? `\n[Available Images: ${availableImages.join(', ')}]` : ''
         }`
       }
     ];
@@ -1788,12 +1807,16 @@ async function handleMessage(message, question, isCommand = false) {
       switch (name) {
         case 'analyzeImage':
           try {
-            // Use actual image URL from message if available
-            const imageUrl = images.find(url => url.includes(args.imageUrl)) || images[0];
+            // Use first available image if none specified
+            const imageUrl = availableImages[0];
+            
             if (!imageUrl) {
-              return { error: true, message: "No valid image found in message" };
+              console.log('No images found to analyze');
+              return { error: true, message: "No images found in message to analyze" };
             }
 
+            console.log('Analyzing image:', imageUrl);
+            
             const imageCompletion = await openai.chat.completions.create({
               model: "grok-vision-beta",
               messages: [
