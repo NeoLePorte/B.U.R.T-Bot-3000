@@ -1785,36 +1785,60 @@ function logMessageImages(message) {
   return images;
 }
 
-// Update handleMessage
+// Update handleMessage to include images in initial context
 async function handleMessage(message, question, isCommand = false) {
   try {
     // Get available images
     const availableImages = logMessageImages(message);
     console.log('Available images:', availableImages);
 
+    // If there are images, include them in the initial message
+    let initialContent = [];
+    
+    // Add images first if they exist
+    if (availableImages.length > 0) {
+      availableImages.forEach(imageUrl => {
+        initialContent.push({
+          type: "image_url",
+          image_url: {
+            url: imageUrl,
+            detail: "high"
+          }
+        });
+      });
+    }
+
+    // Add text content
+    initialContent.push({
+      type: "text",
+      text: `[Context: Message from user: ${getDisplayName(message, isCommand)}] ${question}`
+    });
+
     const messages = [
       { role: "system", content: BURT_PROMPT },
-      {
-        role: "user",
-        content: `[Context: Message from user: ${getDisplayName(message, isCommand)}] ${question}${
-          availableImages.length > 0 ? `\n[Available Images: ${availableImages.join(', ')}]` : ''
-        }`
+      { 
+        role: "user", 
+        content: initialContent
       }
     ];
 
-    // Update executeToolCall for analyzeImage
+    // Store images in closure for tool access
+    const imageContext = {
+      availableImages,
+      currentMessage: message
+    };
+
+    // Update executeToolCall to use stored context
     async function executeToolCall(name, args, message) {
       switch (name) {
         case 'analyzeImage':
           try {
-            // Use first available image if none specified
-            const imageUrl = availableImages[0];
-            
-            if (!imageUrl) {
+            if (!imageContext.availableImages.length) {
               console.log('No images found to analyze');
               return { error: true, message: "No images found in message to analyze" };
             }
 
+            const imageUrl = imageContext.availableImages[0];
             console.log('Analyzing image:', imageUrl);
             
             const imageCompletion = await openai.chat.completions.create({
@@ -1854,7 +1878,7 @@ async function handleMessage(message, question, isCommand = false) {
       }
     }
 
-    return await handleStreamingResponse(messages, message, isCommand);
+    return await handleStreamingResponse(messages, message, isCommand, imageContext);
   } catch (error) {
     console.error('Error in handleMessage:', error);
     throw error;
