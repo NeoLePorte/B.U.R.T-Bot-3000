@@ -1565,9 +1565,9 @@ async function handleUserInput(message, question, isCommand = false) {
     const mentionedUsers = Array.from(message.mentions.users.values());
     const contextMessage = {
       role: "user",
-      content: `[Context: ${isCommand ? 'Command' : 'Message'} from user: ${message.author.username} (${message.author.id})]
-                [Mentions: ${mentionedUsers.map(u => `${u.username} (${u.id})`).join(', ')}]
-                ${question}`
+      content: `[Context: ${isCommand ? 'Command' : 'Message'} from user: ${
+        getDisplayName(message, isCommand)
+      }] ${question}`
     };
 
     // Let the model decide which tools to use
@@ -1646,10 +1646,8 @@ async function handleMessage(message, question, isCommand = false) {
     const contextMessage = {
       role: "user",
       content: `[Context: ${isCommand ? 'Command' : 'Message'} from user: ${
-        isCommand ? message.user.username : message.author.username
-      }] [Channel: ${isCommand ? message.channel.name : message.channel.name}] [Server: ${
-        isCommand ? message.guild.name : message.guild.name
-      }] ${question}`.replace(/\s+/g, ' ').trim()
+        getDisplayName(message, isCommand)
+      }] ${question}`
     };
 
     // Initial completion request
@@ -1710,5 +1708,16 @@ async function handleMessage(message, question, isCommand = false) {
   } catch (error) {
     console.error('Error in handleMessage:', error);
     throw error;
+  }
+}
+
+// Helper function to get display name
+function getDisplayName(message, isCommand = false) {
+  if (isCommand) {
+    // For slash commands
+    return message.member?.displayName || message.user.username;
+  } else {
+    // For message mentions
+    return message.member?.displayName || message.author.username;
   }
 }
