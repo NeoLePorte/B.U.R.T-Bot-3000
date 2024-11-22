@@ -64,6 +64,24 @@ const commands = [
         required: true
       }
     ]
+  },
+  {
+    name: 'analyze',
+    description: 'Have BURT analyze an image',
+    options: [
+      {
+        name: 'image',
+        description: 'The image to analyze',
+        type: 11, // ATTACHMENT type
+        required: true
+      },
+      {
+        name: 'question',
+        description: 'Specific question about the image (optional)',
+        type: 3, // STRING type
+        required: false
+      }
+    ]
   }
 ];
 
@@ -844,6 +862,46 @@ client.on('interactionCreate', async interaction => {
             content: '*[BURT stares intensely at a wall]*',
             ephemeral: true
           });
+        }
+        break;
+
+      case 'analyze':
+        const image = interaction.options.getAttachment('image');
+        const question = interaction.options.getString('question') || 'What do you see in this image?';
+
+        if (!image.contentType?.startsWith('image/')) {
+          await interaction.reply('Please provide a valid image file!');
+          return;
+        }
+
+        await interaction.deferReply();
+        
+        try {
+          const messages = [
+            { role: "system", content: BURT_PROMPT },
+            { 
+              role: "user", 
+              content: [
+                {
+                  type: "image_url",
+                  image_url: {
+                    url: image.url,
+                    detail: "high"
+                  }
+                },
+                {
+                  type: "text",
+                  text: question
+                }
+              ]
+            }
+          ];
+
+          const response = await handleStreamingResponse(messages, interaction, true);
+          
+        } catch (error) {
+          console.error('Error in analyze command:', error);
+          await interaction.editReply('*[BURT has a mental breakdown]* Sorry, something went wrong analyzing that image! 😵');
         }
         break;
     }
@@ -1642,16 +1700,34 @@ function determineToolForQuery(query, mentionedUsers) {
 // Update the message handling function
 async function handleMessage(message, question, isCommand = false) {
   try {
-    const contextMessage = {
-      role: "user",
-      content: `[Context: ${isCommand ? 'Command' : 'Message'} from user: ${
+    let content = [];
+    
+    // Handle attached images
+    if (message.attachments.size > 0) {
+      for (const [_, attachment] of message.attachments) {
+        if (attachment.contentType?.startsWith('image/')) {
+          content.push({
+            type: "image_url",
+            image_url: {
+              url: attachment.url,
+              detail: "high"
+            }
+          });
+        }
+      }
+    }
+    
+    // Add text content
+    content.push({
+      type: "text",
+      text: `[Context: ${isCommand ? 'Command' : 'Message'} from user: ${
         getDisplayName(message, isCommand)
       }] ${question}`
-    };
+    });
 
     const messages = [
       { role: "system", content: BURT_PROMPT },
-      contextMessage
+      { role: "user", content: content }
     ];
 
     return await handleStreamingResponse(messages, message, isCommand);
@@ -1676,7 +1752,7 @@ function getDisplayName(message, isCommand = false) {
 async function handleStreamingResponse(messages, loadingMessage, isCommand = false) {
   try {
     const completion = await openai.chat.completions.create({
-      model: "grok-beta",
+      model: "grok-vision-beta", // Use vision model when images are present
       messages: messages,
       max_tokens: 1000,
       stream: true,
@@ -1751,6 +1827,17 @@ async function handleStreamingResponse(messages, loadingMessage, isCommand = fal
     return accumulatedResponse;
   } catch (error) {
     console.error('Error in streaming response:', error);
+    throw error;
+  }
+}
+
+// Add these helper functions at the top
+async function getImageAsBase64(url) {
+  try {
+    const response = await axios.get(url, { responseType: 'arraybuffer' });
+    return Buffer.from(response.data, 'binary').toString('base64');
+  } catch (error) {
+    console.error('Error fetching image:', error);
     throw error;
   }
 }
