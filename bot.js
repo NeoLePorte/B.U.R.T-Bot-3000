@@ -1096,6 +1096,28 @@ const functions = [
         required: ["query"]
       }
     }
+  },
+  {
+    type: "function",
+    function: {
+      name: "analyzeImage",
+      description: "Analyze an image URL to understand its content",
+      parameters: {
+        type: "object",
+        properties: {
+          imageUrl: {
+            type: "string",
+            description: "URL of the image to analyze"
+          },
+          question: {
+            type: "string",
+            description: "Specific question about the image (optional)",
+            default: "What do you see in this image?"
+          }
+        },
+        required: ["imageUrl"]
+      }
+    }
   }
 ];
 
@@ -1310,6 +1332,41 @@ async function executeToolCall(name, args, context) {
           };
         }
         return await duckDuckGoSearch(args.query, args.limit);
+
+      case 'analyzeImage':
+        try {
+          const imageCompletion = await openai.chat.completions.create({
+            model: "grok-vision-beta",
+            messages: [
+              { role: "system", content: BURT_PROMPT },
+              { 
+                role: "user", 
+                content: [
+                  {
+                    type: "image_url",
+                    image_url: {
+                      url: args.imageUrl,
+                      detail: "high"
+                    }
+                  },
+                  {
+                    type: "text",
+                    text: args.question || "What do you see in this image?"
+                  }
+                ]
+              }
+            ],
+            max_tokens: 1000
+          });
+          return { 
+            description: completion.choices[0].message.content,
+            imageUrl: args.imageUrl
+          };
+        } catch (error) {
+          console.error('Error analyzing image:', error);
+          return { error: true, message: error.message };
+        }
+        break;
 
       default:
         throw new Error(`Unknown tool: ${name}`);
