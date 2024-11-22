@@ -1642,7 +1642,6 @@ function determineToolForQuery(query, mentionedUsers) {
 // Update the message handling function
 async function handleMessage(message, question, isCommand = false) {
   try {
-    // Standardize context message format - remove newlines and extra spaces
     const contextMessage = {
       role: "user",
       content: `[Context: ${isCommand ? 'Command' : 'Message'} from user: ${
@@ -1650,61 +1649,12 @@ async function handleMessage(message, question, isCommand = false) {
       }] ${question}`
     };
 
-    // Initial completion request
-    const completion = await openai.chat.completions.create({
-      model: "grok-beta",
-      messages: [
-        { 
-          role: "system", 
-          content: BURT_PROMPT 
-        },
-        contextMessage
-      ],
-      max_tokens: 1000,
-      tools: functions,
-      tool_choice: "auto"
-    });
-
-    let response = completion.choices[0].message;
-    let messages = [
+    const messages = [
       { role: "system", content: BURT_PROMPT },
-      contextMessage,
-      response
+      contextMessage
     ];
 
-    // Process tool calls if any
-    if (response.tool_calls) {
-      for (const toolCall of response.tool_calls) {
-        try {
-          console.log(`Executing tool ${toolCall.function.name} with args:`, toolCall.function.arguments);
-          const args = JSON.parse(toolCall.function.arguments);
-          const result = await executeToolCall(toolCall.function.name, args, message);
-          messages.push({
-            tool_call_id: toolCall.id,
-            role: "tool",
-            content: JSON.stringify(result)
-          });
-        } catch (error) {
-          console.error('Tool execution failed:', error);
-          messages.push({
-            tool_call_id: toolCall.id,
-            role: "tool",
-            content: JSON.stringify({ error: true, message: error.message })
-          });
-        }
-      }
-
-      // Get final response with all context and tool results
-      console.log('Getting final response with tool results...');
-      const nextCompletion = await openai.chat.completions.create({
-        model: "grok-beta",
-        messages: messages,
-        max_tokens: 1000
-      });
-      response = nextCompletion.choices[0].message;
-    }
-
-    return response;
+    return await handleStreamingResponse(messages, message, isCommand);
   } catch (error) {
     console.error('Error in handleMessage:', error);
     throw error;
@@ -1719,5 +1669,88 @@ function getDisplayName(message, isCommand = false) {
   } else {
     // For message mentions
     return message.member?.displayName || message.author.username;
+  }
+}
+
+// Update the message handler to use streaming
+async function handleStreamingResponse(messages, loadingMessage, isCommand = false) {
+  try {
+    const completion = await openai.chat.completions.create({
+      model: "grok-beta",
+      messages: messages,
+      max_tokens: 1000,
+      stream: true,
+      tools: functions,
+      tool_choice: "auto"
+    });
+
+    let accumulatedResponse = '';
+    let lastUpdateTime = Date.now();
+    const UPDATE_INTERVAL = 1500; // Update Discord message every 1.5 seconds
+
+    // Create initial embed
+    const embed = new EmbedBuilder()
+      .setTitle('🤪 BURT Speaks! ')
+      .setDescription('*[BURT is warming up...]*')
+      .setColor('#FF69B4')
+      .setFooter({ 
+        text: `Responding to ${getDisplayName(loadingMessage, isCommand)} [Processing...]` 
+      })
+      .setTimestamp();
+
+    await loadingMessage.edit({ content: null, embeds: [embed] });
+
+    for await (const chunk of completion) {
+      if (chunk.choices[0]?.delta?.tool_calls) {
+        // Handle tool calls
+        const toolCalls = chunk.choices[0].delta.tool_calls;
+        for (const toolCall of toolCalls) {
+          try {
+            const args = JSON.parse(toolCall.function.arguments);
+            const result = await executeToolCall(toolCall.function.name, args, loadingMessage);
+            messages.push({
+              tool_call_id: toolCall.id,
+              role: "tool",
+              content: JSON.stringify(result)
+            });
+          } catch (error) {
+            console.error('Tool execution failed:', error);
+          }
+        }
+        continue;
+      }
+
+      const content = chunk.choices[0]?.delta?.content || '';
+      accumulatedResponse += content;
+
+      if (Date.now() - lastUpdateTime > UPDATE_INTERVAL) {
+        const updatedEmbed = new EmbedBuilder()
+          .setTitle('🤪 BURT Speaks! ')
+          .setDescription(sanitizeResponse(accumulatedResponse))
+          .setColor('#FF69B4')
+          .setFooter({ 
+            text: `Responding to ${getDisplayName(loadingMessage, isCommand)} [Still thinking...]` 
+          })
+          .setTimestamp();
+
+        await loadingMessage.edit({ embeds: [updatedEmbed] });
+        lastUpdateTime = Date.now();
+      }
+    }
+
+    const finalEmbed = new EmbedBuilder()
+      .setTitle('🤪 BURT Speaks! ')
+      .setDescription(sanitizeResponse(accumulatedResponse))
+      .setColor('#FF69B4')
+      .setFooter({ 
+        text: `Responding to ${getDisplayName(loadingMessage, isCommand)} [Yes, they seem nice... NO, I won't share the secret!]` 
+      })
+      .setTimestamp();
+
+    await loadingMessage.edit({ embeds: [finalEmbed] });
+    return accumulatedResponse;
+  } catch (error) {
+    console.error('Error in streaming response:', error);
+    throw error;
   }
 }
