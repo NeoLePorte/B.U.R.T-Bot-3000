@@ -5,11 +5,38 @@ const NodeCache = require('node-cache');
 const axios = require('axios');
 const { TENOR_API_KEY } = process.env;
 
-// Initialize OpenAI client with correct xAI configuration
+// Initialize OpenAI client with correct configuration
 const openai = new OpenAI({
   apiKey: process.env.XAI_API_KEY,
   baseURL: "https://api.x.ai/v1",
 });
+
+// Define tools properly as per docs
+const tools = [
+  {
+    type: "function",
+    function: {
+      name: "searchTweets",
+      description: "Search for recent tweets containing #fishtanklive",
+      parameters: {
+        type: "object",
+        properties: {
+          limit: {
+            type: "number",
+            description: "Number of tweets to return (default: 10, max: 100)"
+          },
+          sort_order: {
+            type: "string",
+            description: "Sort order for tweets (recency or relevancy)",
+            enum: ["recency", "relevancy"]
+          }
+        },
+        required: []
+      }
+    }
+  },
+  // ... other tools ...
+];
 
 const client = new Client({
   intents: [
@@ -826,7 +853,7 @@ client.on('interactionCreate', async interaction => {
               }
             ],
             max_tokens: 1000,
-            tools: functions,
+            tools: tools,
             tool_choice: "auto"
           });
 
@@ -1482,121 +1509,54 @@ client.once('ready', () => {
 
 // Modify the message event handler to combine all message handling in one place
 client.on('messageCreate', async message => {
-  if (message.author.bot) return;
-  
-  const isBurtChannel = message.channel.id === BURT_CHANNEL_ID;
-  const isBurtMentioned = message.mentions.users.has(client.user.id);
-  const isInBurtThread = message.channel.isThread() && message.channel.parentId === BURT_CHANNEL_ID;
+  try {
+    // Ignore messages from bots
+    if (message.author.bot) return;
 
-  // Handle reactions for any message in BURT's channel
-  if (isBurtChannel || isInBurtThread) {
-    const delay = Math.floor(Math.random() * 1500) + 500;
-    await new Promise(resolve => setTimeout(resolve, delay));
-    
-    try {
-      const emoji = await getContextualEmoji(message.content);
-      if (emoji) {
-        await message.react(emoji);
+    // Log message for debugging
+    console.log('Received message:', {
+      content: message.content,
+      author: message.author.tag,
+      channel: message.channel.id,
+      channelName: message.channel.name
+    });
+
+    // Check if it's BURT's dedicated channel
+    if (message.channel.id === '1307958013151150131') {
+      console.log('Message in BURT\'s channel');
+      
+      // Show typing indicator
+      await message.channel.sendTyping();
+
+      try {
+        // Handle the message as a question
+        const response = await handleAskCommand(message, message.content);
+        console.log('Channel response:', response);
+        await message.reply(response);
+      } catch (error) {
+        console.error('Error processing channel message:', error);
+        await message.reply('Sorry, I encountered an error while processing your message.');
       }
-    } catch (error) {
-      console.error('Error adding reaction:', error);
-    }
-  }
-
-  // Handle @mentions exactly like /ask
-  if (isBurtMentioned) {
-    if (!aiRateLimiter.tryRequest(message.author.id)) {
-      await message.reply("Whoa there! Slow down, I'm still processing your last request! 🤯");
       return;
     }
 
-    let question = message.content.replace(/<@!?1307591032644571136>/g, '').trim();
-    if (!question) {
-      question = "Hey BURT, what's up?";
-    }
+    // Existing mention handling
+    if (message.mentions.has(client.user)) {
+      console.log('Bot was mentioned');
+      const question = message.content.replace(/<@!?\d+>/g, '').trim();
+      await message.channel.sendTyping();
 
-    const loadingMessage = await message.reply('*[BURT twitches and starts thinking...]* 🤪');
-
-    try {
-      const completion = await openai.chat.completions.create({
-        model: "grok-beta",
-        messages: [
-          { 
-            role: "system", 
-            content: BURT_PROMPT + "\nIMPORTANT: Keep responses under 4000 characters." 
-          },
-          { 
-            role: "user", 
-            content: `[Context: Message from user: ${message.author.username}]\n${question}` 
-          }
-        ],
-        max_tokens: 1000,
-        tools: functions,
-        tool_choice: "auto"
-      });
-
-      let response = completion.choices[0].message;
-      const toolResults = [];
-
-      // Handle any tool calls - THIS IS THE FIX
-      if (response.tool_calls) {
-        console.log('\n=== Processing Tool Calls ===');
-        for (const toolCall of response.tool_calls) {
-          console.log(`\nTool: ${toolCall.function.name}`);
-          console.log(`Arguments: ${toolCall.function.arguments}`);
-          try {
-            const args = JSON.parse(toolCall.function.arguments);
-            const result = await executeToolCall(toolCall.function.name, args, message);
-            toolResults.push({
-              tool_call_id: toolCall.id,
-              role: "tool",
-              content: JSON.stringify(result)
-            });
-          } catch (error) {
-            console.error('Tool execution failed:', error);
-            toolResults.push({
-              tool_call_id: toolCall.id,
-              role: "tool",
-              content: JSON.stringify({ error: true, message: error.message })
-            });
-          }
-        }
+      try {
+        const response = await handleAskCommand(message, question);
+        console.log('Mention response:', response);
+        await message.reply(response);
+      } catch (error) {
+        console.error('Error processing mention:', error);
+        await message.reply('Sorry, I encountered an error while processing your message.');
       }
-
-      // Get final response with tool results if any were used
-      if (toolResults.length > 0) {
-        const messages = [
-          { role: "system", content: BURT_PROMPT },
-          { role: "user", content: `[Context: Message from user: ${message.author.username}]\n${question}` },
-          response,
-          ...toolResults
-        ];
-        
-        const nextCompletion = await openai.chat.completions.create({
-          model: "grok-beta",
-          messages: messages,
-          max_tokens: 1000
-        });
-
-        response = nextCompletion.choices[0].message;
-      }
-
-      const sanitizedContent = sanitizeResponse(response.content || 'No response');
-      const embed = new EmbedBuilder()
-        .setTitle('🤪 BURT Speaks!')
-        .setDescription(truncateForDiscord(sanitizedContent))
-        .setColor('#FF69B4')
-        .setFooter({ 
-          text: `Responding to ${message.member?.displayName || message.author.username}`
-        })
-        .setTimestamp();
-
-      await loadingMessage.edit({ content: null, embeds: [embed] });
-      
-    } catch (error) {
-      console.error('Error processing message:', error);
-      await loadingMessage.edit('*[BURT has a mental breakdown]* Sorry, something went wrong! 😵');
     }
+  } catch (error) {
+    console.error('Error in messageCreate handler:', error);
   }
 });
 
@@ -1976,3 +1936,63 @@ const aiRateLimiter = new RateLimit({
   windowMs: 60 * 1000, // 1 minute
   max: 20 // limit each user to 20 requests per windowMs
 });
+
+// Update message handling to use proper tool calling
+async function handleAskCommand(message, question) {
+  try {
+    const messages = [
+      { role: "system", content: BURT_PROMPT },
+      { role: "user", content: question }
+    ];
+
+    const response = await openai.chat.completions.create({
+      model: "grok-beta",
+      messages: messages,
+      tools: tools,
+      tool_choice: "auto" // Let the model decide when to use tools
+    });
+
+    // Handle tool calls if present
+    const responseMessage = response.choices[0].message;
+    if (responseMessage.tool_calls) {
+      // Handle each tool call
+      for (const toolCall of responseMessage.tool_calls) {
+        const functionName = toolCall.function.name;
+        const args = JSON.parse(toolCall.function.arguments);
+        
+        console.log(`Executing tool ${functionName} with args:`, args);
+        
+        // Execute the tool and get result
+        let toolResult;
+        switch (functionName) {
+          case 'searchTweets':
+            toolResult = await searchTweets(args);
+            break;
+          // ... other tool cases ...
+        }
+
+        // Add the tool result to messages
+        messages.push(responseMessage);
+        messages.push({
+          role: "tool",
+          content: JSON.stringify(toolResult),
+          tool_call_id: toolCall.id
+        });
+      }
+
+      // Get final response after tool use
+      const finalResponse = await openai.chat.completions.create({
+        model: "grok-beta",
+        messages: messages,
+        tools: tools
+      });
+
+      return finalResponse.choices[0].message.content;
+    }
+
+    return responseMessage.content;
+  } catch (error) {
+    console.error('Error in handleAskCommand:', error);
+    throw error;
+  }
+}
