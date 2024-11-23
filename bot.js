@@ -3,7 +3,7 @@ require('dotenv').config();
 const OpenAI = require("openai");
 const NodeCache = require('node-cache');
 const axios = require('axios');
-const { TENOR_KEY } = process.env;
+const { TENOR_API_KEY } = process.env;
 
 // Initialize OpenAI client with correct xAI configuration
 const openai = new OpenAI({
@@ -1701,7 +1701,7 @@ async function searchGif(args) {
     const response = await axios.get('https://tenor.googleapis.com/v2/search', {
       params: {
         q: `${args.mood} ${args.searchTerm} reaction`,
-        key: TENOR_KEY,
+        key: TENOR_API_KEY,
         client_key: 'burt_bot',
         limit: 1,
         media_filter: 'minimal'
