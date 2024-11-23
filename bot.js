@@ -1465,7 +1465,9 @@ async function handleAskCommand(message, question) {
         messages: conversation
       });
 
-      return finalResponse.choices[0].message.content;
+      // Sanitize the response before returning
+      return sanitizeResponse(finalResponse.choices[0].message.content);
+
     }
 
     // If no tools were needed, return the initial response
@@ -1476,3 +1478,87 @@ async function handleAskCommand(message, question) {
     throw error;
   }
 }
+
+// Add this function near the top with other utility functions
+function sanitizeResponse(response) {
+  try {
+    if (!response) return 'Sorry, I encountered an error processing your request.';
+
+    // Remove any potential Discord markdown exploits
+    let sanitized = response
+      .replace(/(@everyone|@here)/gi, '`$1`')
+      // Clean up excessive newlines
+      .replace(/\n{3,}/g, '\n\n')
+      // Ensure code blocks are properly closed
+      .replace(/```(?!.*```)/g, '```\n')
+      // Ensure all markdown is properly closed
+      .replace(/(\*\*|\*|__|_)(?:(?!\1).)*$/, '');
+
+    // Ensure response isn't too long for Discord
+    if (sanitized.length > 2000) {
+      sanitized = sanitized.slice(0, 1997) + '...';
+    }
+
+    return sanitized;
+  } catch (error) {
+    console.error('Error sanitizing response:', error);
+    return 'Sorry, I encountered an error processing your request.';
+  }
+}
+
+// Then update the relevant part of your command handling
+async function handleAskCommand(message, question) {
+  try {
+    // ... existing code ...
+
+    // 3. Final request with tool results as context
+    console.log('=== Getting Final Response ===');
+    const finalResponse = await openai.chat.completions.create({
+      model: "grok-beta",
+      messages: conversation
+    });
+
+    // Sanitize the response before returning
+    return sanitizeResponse(finalResponse.choices[0].message.content);
+
+  } catch (error) {
+    console.error('Error in handleAskCommand:', error);
+    throw error;
+  }
+}
+
+// Also update any direct message replies to use sanitizeResponse
+client.on('messageCreate', async message => {
+  try {
+    if (message.author.bot) return;
+
+    if (message.channel.id === '1307958013151150131') {
+      console.log('Message in BURT\'s channel:', {
+        content: message.content,
+        author: message.author.tag
+      });
+      
+      await message.channel.sendTyping();
+
+      try {
+        const response = await handleAskCommand(message, message.content);
+        const sanitizedResponse = sanitizeResponse(response);
+        
+        // Split long messages if needed
+        if (sanitizedResponse.length > 2000) {
+          const chunks = sanitizedResponse.match(/.{1,2000}/g) || [];
+          for (const chunk of chunks) {
+            await message.reply(chunk);
+          }
+        } else {
+          await message.reply(sanitizedResponse);
+        }
+      } catch (error) {
+        console.error('Error processing channel message:', error);
+        await message.reply('Sorry, I encountered an error while processing your message.');
+      }
+    }
+  } catch (error) {
+    console.error('Error in messageCreate handler:', error);
+  }
+});
