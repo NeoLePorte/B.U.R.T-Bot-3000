@@ -1494,6 +1494,14 @@ client.on('messageCreate', async message => {
         })
         .setTimestamp();
 
+      // Add this: If response contains a GIF URL, add it to the embed
+      const gifMatch = response.match(/\[gif: (.*?)\]/);
+      if (gifMatch && gifMatch[1]) {
+        embed.setImage(gifMatch[1]);
+        // Remove the [gif: url] text from the response
+        embed.setDescription(response.replace(/\[gif: .*?\]/, ''));
+      }
+
       await loadingMessage.edit({ content: null, embeds: [embed] });
     } catch (error) {
       console.error('Error processing message:', error);
