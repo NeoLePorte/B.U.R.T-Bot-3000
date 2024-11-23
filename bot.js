@@ -1054,25 +1054,8 @@ const functions = [
   {
     type: "function",
     function: {
-      name: "getRecentMessages",
-      description: "Fetches recent messages from the channel for context",
-      parameters: {
-        type: "object",
-        properties: {
-          limit: {
-            type: "number",
-            description: "Number of messages to fetch (default: 50, max: 100)"
-          }
-        },
-        required: []
-      }
-    }
-  },
-  {
-    type: "function",
-    function: {
       name: "getUserInfo",
-      description: "Gets information about a Discord user",
+      description: "Get information about a Discord user",
       parameters: {
         type: "object",
         properties: {
@@ -1088,77 +1071,16 @@ const functions = [
   {
     type: "function",
     function: {
-      name: "getChannelInfo",
-      description: "Gets information about the current Discord channel",
-      parameters: {
-        type: "object",
-        properties: {},
-        required: []
-      }
-    }
-  },
-  {
-    type: "function",
-    function: {
-      name: "searchTweets",
-      description: "Searches recent tweets about #fishtanklive",
+      name: "getRecentMessages",
+      description: "Get recent messages from the channel",
       parameters: {
         type: "object",
         properties: {
           limit: {
             type: "number",
-            description: "Number of tweets to return"
-          },
-          sort_order: {
-            type: "string",
-            description: "Sort order for tweets",
-            enum: ["recency", "relevancy"]
+            description: "Number of messages to fetch (max 100)"
           }
-        },
-        required: []
-      }
-    }
-  },
-  {
-    type: "function",
-    function: {
-      name: "webSearch",
-      description: "Search the web for information",
-      parameters: {
-        type: "object",
-        properties: {
-          query: {
-            type: "string",
-            description: "Search query"
-          },
-          limit: {
-            type: "number",
-            description: "Number of results to return (default: 5)"
-          }
-        },
-        required: ["query"]
-      }
-    }
-  },
-  {
-    type: "function",
-    function: {
-      name: "analyzeImage",
-      description: "Analyze an image URL to understand its content",
-      parameters: {
-        type: "object",
-        properties: {
-          imageUrl: {
-            type: "string",
-            description: "URL of the image to analyze"
-          },
-          question: {
-            type: "string",
-            description: "Specific question about the image (optional)",
-            default: "What do you see in this image?"
-          }
-        },
-        required: ["imageUrl"]
+        }
       }
     }
   },
@@ -1166,18 +1088,17 @@ const functions = [
     type: "function",
     function: {
       name: "searchGif",
-      description: "Search for and include a reaction GIF in the response. Use this when you want to express emotion through a GIF.",
+      description: "Search for a reaction GIF",
       parameters: {
         type: "object",
         properties: {
           searchTerm: {
             type: "string",
-            description: "Search term for the GIF (e.g., 'excited reaction', 'mind blown', 'confused math lady')"
+            description: "What to search for"
           },
           mood: {
             type: "string",
-            description: "Your current emotional state to help find an appropriate reaction GIF",
-            enum: ["happy", "confused", "excited", "angry", "sad", "surprised", "skeptical", "proud"]
+            description: "The mood/emotion of the GIF"
           }
         },
         required: ["searchTerm", "mood"]
@@ -1188,7 +1109,7 @@ const functions = [
     type: "function",
     function: {
       name: "addReaction",
-      description: "React to a message with one or more emojis to express your feelings about it",
+      description: "React to the user's message with emojis to express your feelings",
       parameters: {
         type: "object",
         properties: {
@@ -1495,12 +1416,13 @@ async function executeToolCall(name, args, context) {
         try {
           console.log(`Adding reactions for reason: ${args.reason}`);
           
-          // Add reactions sequentially with a small delay
+          // Add reactions sequentially with natural delays
           for (const emoji of args.emojis) {
             try {
-              await message.react(emoji);
-              // Add small delay between reactions for visual effect
-              await new Promise(resolve => setTimeout(resolve, 500));
+              // Random delay between 500ms and 1500ms
+              const delay = Math.random() * 1000 + 500;
+              await new Promise(resolve => setTimeout(resolve, delay));
+              await context.message.react(emoji);
             } catch (error) {
               console.error(`Failed to add reaction ${emoji}:`, error);
             }
