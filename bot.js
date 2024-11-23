@@ -1815,3 +1815,48 @@ async function addReaction(message, emoji) {
     return { error: true, message: error.message };
   }
 }
+
+// Add getDiscordUserInfo function near other utility functions
+async function getDiscordUserInfo(client, userId) {
+  try {
+    const cleanId = userId.replace(/[<@!>]/g, '');
+    const user = await client.users.fetch(cleanId);
+    
+    if (!user) {
+      return {
+        error: true,
+        message: 'User not found'
+      };
+    }
+
+    // Get guild member if possible
+    let member;
+    try {
+      // Get the first guild this user shares with the bot
+      const guilds = client.guilds.cache;
+      for (const [_, guild] of guilds) {
+        member = await guild.members.fetch(cleanId).catch(() => null);
+        if (member) break;
+      }
+    } catch (err) {
+      console.log('Could not fetch member info:', err);
+    }
+
+    return {
+      id: user.id,
+      username: user.username,
+      displayName: member?.displayName || user.username,
+      avatar: user.avatarURL(),
+      joinedAt: member?.joinedAt?.toISOString(),
+      roles: member?.roles?.cache.map(r => r.name) || [],
+      bot: user.bot
+    };
+  } catch (error) {
+    console.error('Error fetching user info:', error);
+    return {
+      error: true,
+      message: 'Failed to fetch user info',
+      details: error.message
+    };
+  }
+}
