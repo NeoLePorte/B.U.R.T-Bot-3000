@@ -1928,3 +1928,63 @@ const aiRateLimiter = new RateLimit({
   windowMs: 60 * 1000, // 1 minute
   max: 20 // limit each user to 20 requests per windowMs
 });
+
+// Add natural reaction handling
+async function processMessageForReaction(message) {
+  if (message.author.bot) return;
+  
+  // Add a natural delay (1-3 seconds)
+  const reactionDelay = Math.random() * 2000 + 1000;
+  await new Promise(resolve => setTimeout(resolve, reactionDelay));
+
+  try {
+    // Ask BURT to analyze the message content
+    const completion = await openai.chat.completions.create({
+      model: "grok-beta",
+      messages: [
+        {
+          role: "system",
+          content: "You are BURT, a quirky AI assistant. Based on the following message, choose ONE emoji that represents how you'd naturally react to it. Consider the emotional tone, content, and context. Only respond with a single emoji, nothing else."
+        },
+        {
+          role: "user",
+          content: message.content
+        }
+      ],
+      max_tokens: 10,
+      temperature: 0.7 // Add some randomness to reactions
+    });
+
+    const reaction = completion.choices[0].message.content.trim();
+    
+    // Add another small random delay before reacting (0.5-1.5 seconds)
+    const secondDelay = Math.random() * 1000 + 500;
+    await new Promise(resolve => setTimeout(resolve, secondDelay));
+    
+    await message.react(reaction);
+  } catch (error) {
+    console.error('Error processing message for reaction:', error);
+  }
+}
+
+// Modify the message event handler
+client.on('messageCreate', async message => {
+  // Reference existing message handling code
+  if (message.author.bot) return;
+  
+  const isBurtChannel = message.channel.id === BURT_CHANNEL_ID;
+  const isBurtMentioned = message.mentions.users.has(client.user.id);
+  const isInBurtThread = message.channel.isThread() && message.channel.parentId === BURT_CHANNEL_ID;
+
+  // Process reaction for any message BURT can see
+  if (isBurtChannel || isInBurtThread) {
+    processMessageForReaction(message).catch(console.error);
+  }
+
+  // Continue with existing message handling for mentions/commands
+  if (isBurtMentioned) {
+    // Reference existing mention handling
+    console.log(`Processing message from ${message.author.tag}: ${message.content}`);
+    // ... rest of your existing mention handling code
+  }
+});
