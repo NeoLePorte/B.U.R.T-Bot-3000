@@ -1462,12 +1462,6 @@ client.once('ready', () => {
 client.on('messageCreate', async message => {
   if (message.author.bot) return;
   
-  // Add rate limiting check
-  if (!aiRateLimiter.tryRequest(message.author.id)) {
-    await message.reply('*[BURT is overwhelmed]* Whoa there! Please slow down a bit! 🥵');
-    return;
-  }
-
   const isBurtChannel = message.channel.id === BURT_CHANNEL_ID;
   const isBurtMentioned = message.mentions.users.has(client.user.id);
   const isInBurtThread = message.channel.isThread() && message.channel.parentId === BURT_CHANNEL_ID;
@@ -1477,34 +1471,33 @@ client.on('messageCreate', async message => {
     
     let question = message.content;
     if (isBurtMentioned) {
-      question = question.replace(new RegExp(`<@!?${client.user.id}>`), '').trim();
+      // Remove Burt's mention only
+      question = question.replace(/<@!?1307591032644571136>/g, '').trim();
+      if (!question) {
+        question = "Hey BURT, what's up?";
+      }
+    }
+
+    // Only get user info for the sender if no other users are mentioned
+    const otherMentions = message.mentions.users.filter(user => 
+      user.id !== client.user.id && user.id !== message.author.id
+    );
+
+    let contextInfo = '';
+    if (otherMentions.size === 0) {
+      // Just focus on the current speaker
+      contextInfo = `[Context: Message from user: ${message.author.username}]`;
     }
     
     const loadingMessage = await message.reply('*[BURT twitches and starts thinking...]* 🤪');
     
     try {
-      // Get thread context if in a thread
-      let threadContext = '';
-      if (message.channel.isThread()) {
-        const startMessage = await message.channel.fetchStarterMessage();
-        if (startMessage) {
-          threadContext = `Thread started with: "${startMessage.content}"\n\n`;
-        }
-        
-        // Get last few messages from thread for context
-        const threadMessages = await message.channel.messages.fetch({ limit: 5 });
-        const contextMessages = Array.from(threadMessages.values())
-          .reverse()
-          .slice(0, -1) // Exclude the current message
-          .map(msg => `${msg.author.username}: ${msg.content}`)
-          .join('\n');
-          
-        if (contextMessages) {
-          threadContext += `Recent conversation:\n${contextMessages}\n\n`;
-        }
+      const response = await handleMessage(message, `${contextInfo}\n${question}`);
+      
+      if (!response || response.length === 0) {
+        throw new Error('Empty response received');
       }
 
-      const response = await handleMessage(message, threadContext + question);
       const embed = new EmbedBuilder()
         .setTitle('🤪 BURT Speaks!')
         .setDescription(truncateForDiscord(response))
@@ -1514,45 +1507,23 @@ client.on('messageCreate', async message => {
         })
         .setTimestamp();
 
-      // Handle GIF display
-      if (response.content.includes('[gif:')) {
-        const gifMatch = response.content.match(/\[gif: (.*?)\]/);
-        if (gifMatch) {
-          // Remove the [gif: xyz] placeholder from the content
-          const cleanContent = response.content.replace(/\[gif: .*?\]/, '');
-          
-          // Get the actual GIF URL from the tool result
-          const gifUrl = toolResults.find(r => r.gifUrl)?.gifUrl?.url;
-          
-          if (gifUrl) {
-            embed.setImage(gifUrl);
-          }
-          
-          embed.setDescription(cleanContent);
-        }
-      }
-
       await loadingMessage.edit({ content: null, embeds: [embed] });
       
-      // Create thread if in main channel and not already in a thread
-      if (isBurtChannel && !message.channel.isThread()) {
-        const thread = await message.startThread({
-          name: `BURT Chat: ${message.content.slice(0, 50)}...`,
-          autoArchiveDuration: 60
-        });
-        
-        // Optional: Send a welcome message to the thread
-        await thread.send("*[BURT settles into the thread]* Let's continue our chat here! 🤪");
-      }
     } catch (error) {
       console.error('Error processing message:', error);
-      const errorMessage = error.code ? 
-        `Error ${error.code}: ${error.message}` :
-        'An unexpected error occurred';
-      await loadingMessage.edit(`*[BURT has a mental breakdown]* ${errorMessage} 😵`);
+      await loadingMessage.edit('*[BURT has a mental breakdown]* Sorry, something went wrong! 😵');
     }
   }
 });
+
+// Helper function to ensure we never pass empty strings
+function truncateForDiscord(text, maxLength = 4096) {
+  if (!text || typeof text !== 'string') {
+    return 'BURT.exe has stopped working... 🤖💫';
+  }
+  if (text.length <= maxLength) return text;
+  return text.slice(0, maxLength - 3) + '...';
+}
 
 // Add reaction handling
 client.on('messageReactionAdd', async (reaction, user) => {
@@ -1848,7 +1819,9 @@ function truncateMessage(message, maxLength = 4000) {
 
 // Add at the top with other utility functions
 function truncateForDiscord(text, maxLength = 4096) {
-  if (!text) return '';
+  if (!text || typeof text !== 'string') {
+    return 'BURT.exe has stopped working... 🤖💫';
+  }
   if (text.length <= maxLength) return text;
   return text.slice(0, maxLength - 3) + '...';
 }
