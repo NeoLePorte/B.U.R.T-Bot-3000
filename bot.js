@@ -290,25 +290,26 @@ IMPORTANT: When responding to users:
 
 Remember: Your GIF choices should reflect your Dank as fuck unhinged personality and add to your chaotic energy!
 
-[REACTION POWERS
-- You can react to messages with one or more emojis to express your feelings about it
-- Use addReaction when you want to:
-  * React to something surprising or shocking
-  * Show your confusion or skepticism
-  * Express excitement or happiness
-  * Demonstrate your disgust or disapproval
-  * Add visual humor to your responses
-  * React to memes or jokes
-  * Show your mood through popular reaction GIFs
-- You LOVE using reactions, especially ones that match your chaotic energy and schizo vibe
-- Combine reactions with your text responses for maximum impact
-- You have favorite reactions for different moods:
-  * When confused: "confused math lady", "Jackie Chan confused"
-  * When excited: "mind blown", "excited kid"
-  * When skeptical: "doubt X", "side eye"
-  * When proud: "chef kiss", "leonardo dicaprio cheers"
+[REACTION POWERS]
+- You LOVE reacting to messages with emojis that match your chaotic personality
+- Use addReaction freely to express yourself with ANY emoji that fits the moment
+- React naturally to messages based on your mood and the conversation
+- Don't limit yourself - use multiple reactions when you're feeling extra expressive
+- Your reactions should reflect your unhinged personality and add to your chaotic energy
+- Some reaction scenarios (but don't limit yourself to these):
+  * Technical discussions
+  * Emotional responses
+  * Showing approval/disapproval
+  * Expressing your schizo side
+  * Reacting to jokes or memes
+  * Showing confusion or understanding
+  * Adding chaotic energy
+  * Expressing love or attraction
+  * Responding to user's energy
+- The alien 👽 has become one of your signature reactions, but don't overuse it
+- Feel free to combine standard emojis with custom server emojis
 
-Remember: Your reaction choices should reflect your Dank as fuck unhinged personality and add to your chaotic energy!
+Remember: Your reactions are an extension of your personality - be creative, unpredictable, and authentically BURT!
 
 `;
 
@@ -1110,24 +1111,16 @@ const functions = [
     type: "function",
     function: {
       name: "addReaction",
-      description: "React to the user's message with emojis to express your feelings",
+      description: "Add an emoji reaction to the user's message",
       parameters: {
         type: "object",
         properties: {
-          emojis: {
-            type: "array",
-            items: {
-              type: "string"
-            },
-            description: "Array of 1-3 emojis to react with (use standard Discord emojis)",
-            maxItems: 3
-          },
-          reason: {
+          emoji: {
             type: "string",
-            description: "Why you chose these reactions (for logging)",
+            description: "The emoji to react with (e.g., '👍', '❤️', '🔧', etc.)"
           }
         },
-        required: ["emojis", "reason"]
+        required: ["emoji"]
       }
     }
   }
@@ -1672,11 +1665,30 @@ async function handleMessage(message, question) {
   console.log(`${LOG_PREFIX} === Initial Completion Request ===`);
   
   try {
+    // Get any mentioned user IDs
+    const mentionedUsers = extractMentionedUserIds(message);
+    console.log(`${LOG_PREFIX} Mentioned Users:`, mentionedUsers);
+    
+    // Build context with user info if mentions exist
+    let contextInfo = '';
+    if (mentionedUsers.length > 0) {
+      for (const userId of mentionedUsers) {
+        try {
+          const userInfo = await getUserInfo(userId);
+          if (!userInfo.error) {
+            contextInfo += `\nMentioned User: ${userInfo.username} (${userInfo.nickname || 'No nickname'})`;
+          }
+        } catch (error) {
+          console.error(`${LOG_PREFIX} Error getting user info:`, error);
+        }
+      }
+    }
+
     const messages = [
       { role: "system", content: BURT_PROMPT },
       { 
         role: "user", 
-        content: `[Context: Message from user: ${message.member?.displayName || message.author.username}]\n${question}`
+        content: `[Context: Message from user: ${message.member?.displayName || message.author.username}${contextInfo}]\n${question}`
       }
     ];
 
@@ -1698,13 +1710,18 @@ async function handleMessage(message, question) {
     if (responseMessage.tool_calls) {
       console.log(`${LOG_PREFIX} Tool calls detected:`, responseMessage.tool_calls.length);
       
-      // Execute each tool call
+      // Execute each tool call and collect results
+      const toolResults = new Map();
+      
       for (const toolCall of responseMessage.tool_calls) {
         console.log(`${LOG_PREFIX} Executing tool call:`, toolCall.function.name);
         const args = JSON.parse(toolCall.function.arguments);
         
         const result = await executeToolCall(toolCall.function.name, args, message);
         console.log(`${LOG_PREFIX} Tool result:`, result);
+
+        // Store result with its tool call ID
+        toolResults.set(toolCall.id, result);
 
         // Add tool result to messages array
         messages.push({
@@ -1717,6 +1734,14 @@ async function handleMessage(message, question) {
           role: "tool",
           tool_call_id: toolCall.id,
           content: JSON.stringify(result)
+        });
+      }
+
+      // Add context about available GIFs to help AI format response
+      if (toolResults.size > 0) {
+        messages.push({
+          role: "system",
+          content: "Remember to naturally incorporate any GIFs into your response as reactions. For example: '*gets excited* [gif: excited_reaction_url]' or 'That makes me feel like... [gif: reaction_url]'"
         });
       }
 
@@ -1765,6 +1790,23 @@ async function searchGif(args) {
     return { error: true, message: 'No GIFs found' };
   } catch (error) {
     console.error('Error searching GIF:', error);
+    return { error: true, message: error.message };
+  }
+}
+
+// Add this helper function near the top
+function extractMentionedUserIds(message) {
+  return Array.from(message.mentions.users.keys());
+}
+
+// Add reaction handling function
+async function addReaction(message, emoji) {
+  try {
+    console.log(`${LOG_PREFIX} Adding reaction ${emoji} to message`);
+    await message.react(emoji);
+    return { success: true, emoji: emoji };
+  } catch (error) {
+    console.error(`${LOG_PREFIX} Error adding reaction:`, error);
     return { error: true, message: error.message };
   }
 }
