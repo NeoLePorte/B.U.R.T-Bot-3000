@@ -1640,3 +1640,133 @@ function sanitizeResponse(response) {
                 .replace(/\[SYSTEM NOTE:.*?\]/gs, '')
                 .trim();
 }
+
+// Add core functions
+async function getRecentMessages(channel, limit = 50) {
+  try {
+    const messages = await channel.messages.fetch({ limit: Math.min(limit, 100) });
+    return Array.from(messages.values()).map(msg => ({
+      content: msg.content,
+      author: msg.author.username,
+      timestamp: msg.createdTimestamp
+    }));
+  } catch (error) {
+    console.error('Error fetching recent messages:', error);
+    return { error: true, message: error.message };
+  }
+}
+
+async function getChannelInfo(channel) {
+  try {
+    return {
+      name: channel.name,
+      topic: channel.topic,
+      memberCount: channel.members?.size,
+      isNsfw: channel.nsfw,
+      createdAt: channel.createdAt
+    };
+  } catch (error) {
+    console.error('Error fetching channel info:', error);
+    return { error: true, message: error.message };
+  }
+}
+
+async function getUserInfo(userId) {
+  try {
+    const guild = client.guilds.cache.first();
+    const member = await guild.members.fetch(userId);
+    
+    return {
+      username: member.user.username,
+      nickname: member.nickname,
+      roles: Array.from(member.roles.cache.values()).map(role => role.name),
+      joinedAt: member.joinedAt,
+      isBot: member.user.bot
+    };
+  } catch (error) {
+    console.error('Error fetching user info:', error);
+    return { error: true, message: error.message };
+  }
+}
+
+// Add Twitter/X API integration
+let lastTwitterRequest = 0;
+const TWITTER_RATE_LIMIT = 1000 * 60; // 1 minute
+
+function canMakeTwitterRequest() {
+  const now = Date.now();
+  if (now - lastTwitterRequest < TWITTER_RATE_LIMIT) {
+    return false;
+  }
+  lastTwitterRequest = now;
+  return true;
+}
+
+async function searchTweets(args = {}) {
+  try {
+    const response = await axios.get('https://api.twitter.com/2/tweets/search/recent', {
+      headers: {
+        'Authorization': `Bearer ${process.env.TWITTER_BEARER_TOKEN}`
+      },
+      params: {
+        query: '#fishtanklive',
+        max_results: args.limit || 10,
+        'tweet.fields': 'created_at,author_id,public_metrics'
+      }
+    });
+    
+    return response.data.data || [];
+  } catch (error) {
+    console.error('Error searching tweets:', error);
+    return { error: true, message: error.message };
+  }
+}
+
+// Add web search functionality
+async function duckDuckGoSearch(query, limit = 5) {
+  try {
+    const response = await axios.get('https://api.duckduckgo.com/', {
+      params: {
+        q: query,
+        format: 'json'
+      }
+    });
+    
+    return response.data.RelatedTopics
+      .slice(0, limit)
+      .map(topic => ({
+        title: topic.Text,
+        url: topic.FirstURL
+      }));
+  } catch (error) {
+    console.error('Error in web search:', error);
+    return { error: true, message: error.message };
+  }
+}
+
+// Add handleMessage function
+async function handleMessage(message, question) {
+  try {
+    const messages = [
+      { role: "system", content: BURT_PROMPT },
+      { 
+        role: "user", 
+        content: `[Context: Message from user: ${message.member?.displayName || message.author.username}]\n${question}`
+      }
+    ];
+
+    const completion = await openai.chat.completions.create({
+      model: "grok-beta",
+      messages: messages,
+      max_tokens: 1000,
+      temperature: 0.7,
+      tools: functions,
+      tool_choice: "auto"
+    });
+
+    return sanitizeResponse(completion.choices[0].message.content);
+  } catch (error) {
+    console.error('Error in handleMessage:', error);
+    throw error;
+  }
+}
