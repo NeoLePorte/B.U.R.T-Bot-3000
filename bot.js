@@ -3,6 +3,7 @@ require('dotenv').config();
 const OpenAI = require("openai");
 const NodeCache = require('node-cache');
 const axios = require('axios');
+const { TENOR_KEY } = process.env;
 
 // Initialize OpenAI client with correct xAI configuration
 const openai = new OpenAI({
@@ -1690,5 +1691,34 @@ async function handleMessage(message, question) {
   } catch (error) {
     console.error('Error in handleMessage:', error);
     throw error;
+  }
+}
+
+async function searchGif(args) {
+  try {
+    console.log(`Searching for GIF: ${args.mood} ${args.searchTerm} reaction`);
+    
+    const response = await axios.get('https://tenor.googleapis.com/v2/search', {
+      params: {
+        q: `${args.mood} ${args.searchTerm} reaction`,
+        key: TENOR_KEY,
+        client_key: 'burt_bot',
+        limit: 1,
+        media_filter: 'minimal'
+      }
+    });
+
+    if (response.data.results && response.data.results.length > 0) {
+      const gif = response.data.results[0];
+      return {
+        url: gif.media_formats.gif.url,
+        title: gif.title
+      };
+    }
+    
+    return { error: true, message: 'No GIFs found' };
+  } catch (error) {
+    console.error('Error searching GIF:', error);
+    return { error: true, message: error.message };
   }
 }
