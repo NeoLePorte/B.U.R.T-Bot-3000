@@ -1148,7 +1148,7 @@ async function searchTweets(args = {}) {
     // Build query with proper formatting
     const queryParams = new URLSearchParams({
       'query': '#fishtanklive -is:retweet', // Exclude retweets
-      'max_results': Math.min(Math.max(5, args.limit || 5), 100), // Between 5 and 100
+      'max_results': Math.min(Math.max(10, args.limit || 10), 100), // Default increased to 10
       'tweet.fields': 'created_at,author_id,public_metrics,text',
       'expansions': 'author_id',
       'user.fields': 'username,name'
