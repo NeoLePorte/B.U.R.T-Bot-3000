@@ -1408,27 +1408,19 @@ async function executeToolCall(name, args, context) {
 
       case 'addReaction':
         try {
-          console.log(`Adding reactions for reason: ${args.reason}`);
+          console.log(`Adding reaction: ${args.emoji}`);
           
-          // Add reactions sequentially with natural delays
-          for (const emoji of args.emojis) {
-            try {
-              // Random delay between 500ms and 1500ms
-              const delay = Math.random() * 1000 + 500;
-              await new Promise(resolve => setTimeout(resolve, delay));
-              await context.message.react(emoji);
-            } catch (error) {
-              console.error(`Failed to add reaction ${emoji}:`, error);
-            }
-          }
+          // Add a natural delay between 500ms and 1500ms
+          const delay = Math.random() * 1000 + 500;
+          await new Promise(resolve => setTimeout(resolve, delay));
           
+          await context.message.react(args.emoji);
           return {
             success: true,
-            reactions: args.emojis,
-            reason: args.reason
+            emoji: args.emoji
           };
         } catch (error) {
-          console.error('Error adding reactions:', error);
+          console.error('Error adding reaction:', error);
           return { error: true, message: error.message };
         }
         break;
