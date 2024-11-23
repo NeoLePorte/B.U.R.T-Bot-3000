@@ -4,6 +4,7 @@ const OpenAI = require("openai");
 const NodeCache = require('node-cache');
 const axios = require('axios');
 const { TENOR_API_KEY } = process.env;
+const RateLimit = require('express-rate-limit');
 
 // Initialize OpenAI client with correct xAI configuration
 const openai = new OpenAI({
@@ -1501,7 +1502,7 @@ client.on('messageCreate', async message => {
       const response = await handleMessage(message, threadContext + question);
       const embed = new EmbedBuilder()
         .setTitle('🤪 BURT Speaks!')
-        .setDescription(response)
+        .setDescription(truncateForDiscord(response))
         .setColor('#FF69B4')
         .setFooter({ 
           text: `Responding to ${message.member?.displayName || message.author.username}`
@@ -1540,7 +1541,10 @@ client.on('messageCreate', async message => {
       }
     } catch (error) {
       console.error('Error processing message:', error);
-      await loadingMessage.edit('*[BURT has a mental breakdown]* Sorry, something went wrong! 😵');
+      const errorMessage = error.code ? 
+        `Error ${error.code}: ${error.message}` :
+        'An unexpected error occurred';
+      await loadingMessage.edit(`*[BURT has a mental breakdown]* ${errorMessage} 😵`);
     }
   }
 });
@@ -1704,49 +1708,19 @@ async function duckDuckGoSearch(query, limit = 5) {
 }
 
 // Add handleMessage function
-async function handleMessage(message, mentionedUsers = []) {
+async function handleMessage(message, question) {
   try {
-    // ... existing setup code ...
-
-    const responseMessage = await openai.chat.completions.create({
-      model: "grok-beta",
-      messages: messages,
-      max_tokens: 1000,
-      temperature: 0.7,
-      tool_choice: "auto",
-      tools: tools
-    });
-
-    // If there are tool calls, execute them
-    if (responseMessage.choices[0].message.tool_calls) {
-      const toolCalls = responseMessage.choices[0].message.tool_calls;
-      messages.push(responseMessage.choices[0].message);
-
-      // Execute each tool call and collect results
-      const toolResults = await Promise.all(toolCalls.map(async (toolCall) => {
-        const result = await executeToolCall(toolCall);
-        return {
-          tool_call_id: toolCall.id,
-          role: "tool",
-          content: JSON.stringify(result)
-        };
-      }));
-
-      // Add tool results to messages
-      messages.push(...toolResults);
-
-      // Get final response incorporating tool results
-      const finalCompletion = await openai.chat.completions.create({
-        model: "grok-beta",
-        messages: messages,
-        max_tokens: 1000,
-        temperature: 0.7
-      });
-
-      return sanitizeResponse(finalCompletion.choices[0].message.content);
-    }
-
-    return sanitizeResponse(responseMessage.choices[0].message.content);
+    // Get recent messages for context
+    const recentMessages = await message.channel.messages.fetch({ limit: 50 });
+    const messages = [
+      { role: "system", content: BURT_PROMPT },
+      { 
+        role: "user", 
+        content: `[Context: Message from user: ${message.author.username}]\n${question}`
+      }
+    ];
+    
+    // Rest of your handleMessage logic...
   } catch (error) {
     console.error('Error in handleMessage:', error);
     throw error;
@@ -1860,3 +1834,34 @@ async function getDiscordUserInfo(client, userId) {
     };
   }
 }
+
+// Add this helper to truncate long messages
+function truncateMessage(message, maxLength = 4000) {
+  if (message.length <= maxLength) return message;
+  return message.slice(0, maxLength - 3) + '...';
+}
+
+// Add at the top with other utility functions
+function truncateForDiscord(text, maxLength = 4096) {
+  if (!text) return '';
+  if (text.length <= maxLength) return text;
+  return text.slice(0, maxLength - 3) + '...';
+}
+
+// Add cleanup for galleries
+function cleanupOldGalleries() {
+  const now = Date.now();
+  for (const [channelId, gallery] of activeGalleries.entries()) {
+    if (now - gallery.createdAt > GALLERY_TIMEOUT) {
+      activeGalleries.delete(channelId);
+    }
+  }
+}
+
+// Run cleanup periodically
+setInterval(cleanupOldGalleries, GALLERY_TIMEOUT);
+
+const aiRateLimiter = new RateLimit({
+  windowMs: 60 * 1000, // 1 minute
+  max: 20 // limit each IP to 20 requests per windowMs
+});
