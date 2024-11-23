@@ -1117,7 +1117,7 @@ const functions = [
         properties: {
           emoji: {
             type: "string",
-            description: "The emoji to react with (e.g., '����', '❤️', '🔧', etc.)"
+            description: "The emoji to react with (e.g., '', '❤️', '🔧', etc.)"
           }
         },
         required: ["emoji"]
@@ -1813,10 +1813,17 @@ async function searchGif(args) {
   console.log(`BURT searching for GIF: "${searchTerm}" with mood: "${mood}"`);
   
   try {
-    // Get GIF from Tenor with BURT's raw search term
+    // Make sure we have a search term
+    if (!searchTerm) {
+      throw new Error('Search term is required');
+    }
+
+    // Construct the search query
+    const query = mood ? `${searchTerm} ${mood}` : searchTerm;
+    
     const response = await axios.get('https://tenor.googleapis.com/v2/search', {
       params: {
-        q: searchTerm,  // Use BURT's exact search query
+        q: query,  // This was missing/undefined before
         key: process.env.TENOR_API_KEY,
         client_key: 'burt_bot',
         limit: 20,
@@ -1825,7 +1832,6 @@ async function searchGif(args) {
     });
     
     if (response.data.results && response.data.results.length > 0) {
-      // Randomly select a GIF from the results
       const randomIndex = Math.floor(Math.random() * response.data.results.length);
       const selectedGif = response.data.results[randomIndex];
       
@@ -1843,7 +1849,12 @@ async function searchGif(args) {
     
   } catch (error) {
     console.error('Error searching for GIF:', error);
-    return { error: true, message: error.message };
+    return { 
+      error: true, 
+      message: error.message,
+      mood,
+      searchTerm 
+    };
   }
 }
 
