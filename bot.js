@@ -1669,6 +1669,8 @@ async function duckDuckGoSearch(query, limit = 5) {
 
 // Add handleMessage function
 async function handleMessage(message, question) {
+  console.log(`${LOG_PREFIX} === Initial Completion Request ===`);
+  
   try {
     const messages = [
       { role: "system", content: BURT_PROMPT },
@@ -1678,6 +1680,8 @@ async function handleMessage(message, question) {
       }
     ];
 
+    console.log(`${LOG_PREFIX} Messages for initial completion:`, JSON.stringify(messages, null, 2));
+    
     const completion = await openai.chat.completions.create({
       model: "grok-beta",
       messages: messages,
@@ -1687,9 +1691,51 @@ async function handleMessage(message, question) {
       tool_choice: "auto"
     });
 
-    return sanitizeResponse(completion.choices[0].message.content);
+    const responseMessage = completion.choices[0].message;
+    console.log(`${LOG_PREFIX} Initial Response:`, JSON.stringify(responseMessage, null, 2));
+
+    // Handle tool calls if present
+    if (responseMessage.tool_calls) {
+      console.log(`${LOG_PREFIX} Tool calls detected:`, responseMessage.tool_calls.length);
+      
+      // Execute each tool call
+      for (const toolCall of responseMessage.tool_calls) {
+        console.log(`${LOG_PREFIX} Executing tool call:`, toolCall.function.name);
+        const args = JSON.parse(toolCall.function.arguments);
+        
+        const result = await executeToolCall(toolCall.function.name, args, message);
+        console.log(`${LOG_PREFIX} Tool result:`, result);
+
+        // Add tool result to messages array
+        messages.push({
+          role: "assistant",
+          content: responseMessage.content,
+          tool_calls: [toolCall]
+        });
+        
+        messages.push({
+          role: "tool",
+          tool_call_id: toolCall.id,
+          content: JSON.stringify(result)
+        });
+      }
+
+      // Get final response after tool calls
+      console.log(`${LOG_PREFIX} Getting final response after tool calls`);
+      const finalCompletion = await openai.chat.completions.create({
+        model: "grok-beta",
+        messages: messages,
+        max_tokens: 1000,
+        temperature: 0.7
+      });
+
+      console.log(`${LOG_PREFIX} Final Response:`, JSON.stringify(finalCompletion.choices[0].message, null, 2));
+      return sanitizeResponse(finalCompletion.choices[0].message.content);
+    }
+
+    return sanitizeResponse(responseMessage.content);
   } catch (error) {
-    console.error('Error in handleMessage:', error);
+    console.error(`${LOG_PREFIX} Error in handleMessage:`, error);
     throw error;
   }
 }
