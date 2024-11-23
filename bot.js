@@ -4,7 +4,6 @@ const OpenAI = require("openai");
 const NodeCache = require('node-cache');
 const axios = require('axios');
 const { TENOR_API_KEY } = process.env;
-const RateLimit = require('express-rate-limit');
 
 // Initialize OpenAI client with correct xAI configuration
 const openai = new OpenAI({
@@ -1459,95 +1458,121 @@ client.once('ready', () => {
   console.log(`🤪 BURT is now active in #${burtChannel.name}`);
 });
 
-// Update message handling to support threads
+// Modify the message event handler to combine all message handling in one place
 client.on('messageCreate', async message => {
   if (message.author.bot) return;
   
   const isBurtChannel = message.channel.id === BURT_CHANNEL_ID;
   const isBurtMentioned = message.mentions.users.has(client.user.id);
   const isInBurtThread = message.channel.isThread() && message.channel.parentId === BURT_CHANNEL_ID;
-  
-  if (isBurtChannel || isBurtMentioned || isInBurtThread) {
-    console.log(`Processing message from ${message.author.tag}: ${message.content}`);
-    
-    let question = message.content;
-    if (isBurtMentioned) {
-      question = question.replace(new RegExp(`<@!?${client.user.id}>`), '').trim();
-    }
-    
-    const loadingMessage = await message.reply('*[BURT twitches and starts thinking...]* 🤪');
+
+  // Handle reactions for any message in BURT's channel
+  if (isBurtChannel || isInBurtThread) {
+    const delay = Math.floor(Math.random() * 1500) + 500;
+    await new Promise(resolve => setTimeout(resolve, delay));
     
     try {
-      // Get thread context if in a thread
-      let threadContext = '';
-      if (message.channel.isThread()) {
-        const startMessage = await message.channel.fetchStarterMessage();
-        if (startMessage) {
-          threadContext = `Thread started with: "${startMessage.content}"\n\n`;
-        }
-        
-        // Get last few messages from thread for context
-        const threadMessages = await message.channel.messages.fetch({ limit: 5 });
-        const contextMessages = Array.from(threadMessages.values())
-          .reverse()
-          .slice(0, -1) // Exclude the current message
-          .map(msg => `${msg.author.username}: ${msg.content}`)
-          .join('\n');
-          
-        if (contextMessages) {
-          threadContext += `Recent conversation:\n${contextMessages}\n\n`;
+      const emoji = await getContextualEmoji(message.content);
+      if (emoji) {
+        await message.react(emoji);
+      }
+    } catch (error) {
+      console.error('Error adding reaction:', error);
+    }
+  }
+
+  // Handle @mentions exactly like /ask
+  if (isBurtMentioned) {
+    if (!aiRateLimiter.tryRequest(message.author.id)) {
+      await message.reply("Whoa there! Slow down, I'm still processing your last request! 🤯");
+      return;
+    }
+
+    let question = message.content.replace(/<@!?1307591032644571136>/g, '').trim();
+    if (!question) {
+      question = "Hey BURT, what's up?";
+    }
+
+    const loadingMessage = await message.reply('*[BURT twitches and starts thinking...]* 🤪');
+
+    try {
+      const completion = await openai.chat.completions.create({
+        model: "grok-beta",
+        messages: [
+          { 
+            role: "system", 
+            content: BURT_PROMPT + "\nIMPORTANT: Keep responses under 4000 characters." 
+          },
+          { 
+            role: "user", 
+            content: `[Context: Message from user: ${message.author.username}]\n${question}` 
+          }
+        ],
+        max_tokens: 1000,
+        tools: functions,
+        tool_choice: "auto"
+      });
+
+      let response = completion.choices[0].message;
+      const toolResults = [];
+
+      // Handle any tool calls
+      if (response.tool_calls) {
+        for (const toolCall of response.tool_calls) {
+          const result = await executeToolCall(toolCall, message);
+          toolResults.push({
+            role: "tool",
+            content: JSON.stringify(result),
+            tool_call_id: toolCall.id
+          });
         }
       }
 
-      const response = await handleMessage(message, threadContext + question);
+      // Get final response with tool results if any were used
+      if (toolResults.length > 0) {
+        const messages = [
+          { role: "system", content: BURT_PROMPT },
+          { role: "user", content: `[Context: Message from user: ${message.author.username}]\n${question}` },
+          response,
+          ...toolResults
+        ];
+        
+        const nextCompletion = await openai.chat.completions.create({
+          model: "grok-beta",
+          messages: messages,
+          max_tokens: 1000
+        });
+
+        response = nextCompletion.choices[0].message;
+      }
+
+      const sanitizedContent = sanitizeResponse(response.content || 'No response');
       const embed = new EmbedBuilder()
         .setTitle('🤪 BURT Speaks!')
-        .setDescription(truncateForDiscord(response))
+        .setDescription(truncateForDiscord(sanitizedContent))
         .setColor('#FF69B4')
         .setFooter({ 
           text: `Responding to ${message.member?.displayName || message.author.username}`
         })
         .setTimestamp();
 
-      // Handle GIF display
-      if (response.content.includes('[gif:')) {
-        const gifMatch = response.content.match(/\[gif: (.*?)\]/);
-        if (gifMatch) {
-          // Remove the [gif: xyz] placeholder from the content
-          const cleanContent = response.content.replace(/\[gif: .*?\]/, '');
-          
-          // Get the actual GIF URL from the tool result
-          const gifUrl = toolResults.find(r => r.gifUrl)?.gifUrl?.url;
-          
-          if (gifUrl) {
-            embed.setImage(gifUrl);
-          }
-          
-          embed.setDescription(cleanContent);
-        }
-      }
-
       await loadingMessage.edit({ content: null, embeds: [embed] });
       
-      // Create thread if in main channel and not already in a thread
-      if (isBurtChannel && !message.channel.isThread()) {
-        const thread = await message.startThread({
-          name: `BURT Chat: ${message.content.slice(0, 50)}...`,
-          autoArchiveDuration: 60
-        });
-        
-        // Optional: Send a welcome message to the thread
-        await thread.send("*[BURT settles into the thread]* Let's continue our chat here! 🤪");
-      }
     } catch (error) {
       console.error('Error processing message:', error);
-      const errorMessage = error.code ? 
-        `Error ${error.code}: ${error.message}` :
-        'An unexpected error occurred';
-      await loadingMessage.edit(`*[BURT has a mental breakdown]* ${errorMessage} 😵`);
+      await loadingMessage.edit('*[BURT has a mental breakdown]* Sorry, something went wrong! 😵');
     }
   }
 });
+
+// Helper function to ensure we never pass empty strings
+function truncateForDiscord(text, maxLength = 4096) {
+  if (!text || typeof text !== 'string') {
+    return 'BURT.exe has stopped working... 🤖💫';
+  }
+  if (text.length <= maxLength) return text;
+  return text.slice(0, maxLength - 3) + '...';
+}
 
 // Add reaction handling
 client.on('messageReactionAdd', async (reaction, user) => {
@@ -1716,7 +1741,7 @@ async function handleMessage(message, question) {
       { role: "system", content: BURT_PROMPT },
       { 
         role: "user", 
-        content: `[Context: Message from user: ${message.author.username}]\n${question}`
+        content: `[Context: Message from user: ${message.author.username}]\n${question}` 
       }
     ];
     
@@ -1728,37 +1753,53 @@ async function handleMessage(message, question) {
 }
 
 // Update searchGif function to handle GIF requests properly
-async function searchGif(args) {
+async function searchGif(searchTerm, mood) {
   try {
-    const { searchTerm, mood } = args;
-    console.log(`Searching for GIF: ${mood} ${searchTerm} reaction`);
+    console.log('Searching for GIF:', mood, searchTerm, 'reaction');
     
-    const query = mood ? `${searchTerm} ${mood}` : searchTerm;
+    // Ensure we have a search term
+    if (!searchTerm) {
+      return {
+        gifUrl: null,
+        mood: mood,
+        searchTerm: searchTerm,
+        error: 'No search term provided'
+      };
+    }
+
+    // Construct search query
+    const query = `${searchTerm} ${mood || ''} reaction`.trim();
     
     const response = await axios.get('https://tenor.googleapis.com/v2/search', {
       params: {
         q: query,
-        key: process.env.TENOR_API_KEY,
+        key: process.env.TENOR_API_KEY, // Make sure to use the environment variable
         client_key: 'burt_bot',
         limit: 20,
         random: true
       }
     });
 
-    if (response.data?.results?.length > 0) {
-      const gif = response.data.results[Math.floor(Math.random() * response.data.results.length)];
+    if (response.data && response.data.results && response.data.results.length > 0) {
+      // Get a random result from the returned GIFs
+      const randomIndex = Math.floor(Math.random() * response.data.results.length);
+      const gif = response.data.results[randomIndex];
+      
       return {
-        gifUrl: gif.media_formats.gif.url,
-        title: gif.content_description,
-        mood,
-        searchTerm
+        gifUrl: {
+          url: gif.media_formats.gif.url,
+          height: gif.media_formats.gif.dims[1],
+          width: gif.media_formats.gif.dims[0]
+        },
+        mood: mood,
+        searchTerm: searchTerm
       };
     }
     
     return {
       gifUrl: null,
-      mood,
-      searchTerm,
+      mood: mood,
+      searchTerm: searchTerm,
       error: 'No GIFs found'
     };
 
@@ -1766,8 +1807,8 @@ async function searchGif(args) {
     console.error('Error searching for GIF:', error);
     return {
       gifUrl: null,
-      mood,
-      searchTerm,
+      mood: mood,
+      searchTerm: searchTerm,
       error: error.message
     };
   }
@@ -1843,7 +1884,9 @@ function truncateMessage(message, maxLength = 4000) {
 
 // Add at the top with other utility functions
 function truncateForDiscord(text, maxLength = 4096) {
-  if (!text) return '';
+  if (!text || typeof text !== 'string') {
+    return 'BURT.exe has stopped working... 🤖💫';
+  }
   if (text.length <= maxLength) return text;
   return text.slice(0, maxLength - 3) + '...';
 }
@@ -1861,7 +1904,32 @@ function cleanupOldGalleries() {
 // Run cleanup periodically
 setInterval(cleanupOldGalleries, GALLERY_TIMEOUT);
 
+// Add this simple rate limiter implementation
+class RateLimit {
+  constructor(options) {
+    this.windowMs = options.windowMs || 60000; // Default 1 minute
+    this.max = options.max || 30; // Default 30 requests per window
+    this.requests = new Map();
+  }
+
+  tryRequest(userId) {
+    const now = Date.now();
+    const userRequests = this.requests.get(userId) || [];
+    
+    // Clean up old requests
+    const validRequests = userRequests.filter(time => now - time < this.windowMs);
+    
+    if (validRequests.length >= this.max) {
+      return false;
+    }
+    
+    validRequests.push(now);
+    this.requests.set(userId, validRequests);
+    return true;
+  }
+}
+
 const aiRateLimiter = new RateLimit({
   windowMs: 60 * 1000, // 1 minute
-  max: 20 // limit each IP to 20 requests per windowMs
+  max: 20 // limit each user to 20 requests per windowMs
 });
