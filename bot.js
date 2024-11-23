@@ -4,7 +4,6 @@ const OpenAI = require("openai");
 const NodeCache = require('node-cache');
 const axios = require('axios');
 const { TENOR_API_KEY } = process.env;
-const RateLimit = require('express-rate-limit');
 
 // Initialize OpenAI client with correct xAI configuration
 const openai = new OpenAI({
@@ -1463,6 +1462,12 @@ client.once('ready', () => {
 client.on('messageCreate', async message => {
   if (message.author.bot) return;
   
+  // Add rate limiting check
+  if (!aiRateLimiter.tryRequest(message.author.id)) {
+    await message.reply('*[BURT is overwhelmed]* Whoa there! Please slow down a bit! 🥵');
+    return;
+  }
+
   const isBurtChannel = message.channel.id === BURT_CHANNEL_ID;
   const isBurtMentioned = message.mentions.users.has(client.user.id);
   const isInBurtThread = message.channel.isThread() && message.channel.parentId === BURT_CHANNEL_ID;
@@ -1861,7 +1866,32 @@ function cleanupOldGalleries() {
 // Run cleanup periodically
 setInterval(cleanupOldGalleries, GALLERY_TIMEOUT);
 
+// Add this simple rate limiter implementation
+class RateLimit {
+  constructor(options) {
+    this.windowMs = options.windowMs || 60000; // Default 1 minute
+    this.max = options.max || 30; // Default 30 requests per window
+    this.requests = new Map();
+  }
+
+  tryRequest(userId) {
+    const now = Date.now();
+    const userRequests = this.requests.get(userId) || [];
+    
+    // Clean up old requests
+    const validRequests = userRequests.filter(time => now - time < this.windowMs);
+    
+    if (validRequests.length >= this.max) {
+      return false;
+    }
+    
+    validRequests.push(now);
+    this.requests.set(userId, validRequests);
+    return true;
+  }
+}
+
 const aiRateLimiter = new RateLimit({
   windowMs: 60 * 1000, // 1 minute
-  max: 20 // limit each IP to 20 requests per windowMs
+  max: 20 // limit each user to 20 requests per windowMs
 });
