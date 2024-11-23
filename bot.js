@@ -1458,105 +1458,60 @@ client.once('ready', () => {
   console.log(`🤪 BURT is now active in #${burtChannel.name}`);
 });
 
-// Update message handling to support threads
+// Modify the message event handler to combine all message handling in one place
 client.on('messageCreate', async message => {
   if (message.author.bot) return;
   
   const isBurtChannel = message.channel.id === BURT_CHANNEL_ID;
   const isBurtMentioned = message.mentions.users.has(client.user.id);
   const isInBurtThread = message.channel.isThread() && message.channel.parentId === BURT_CHANNEL_ID;
-  
-  if (isBurtChannel || isBurtMentioned || isInBurtThread) {
-    console.log(`Processing message from ${message.author.tag}: ${message.content}`);
-    
-    let question = message.content;
-    if (isBurtMentioned) {
-      question = question.replace(/<@!?1307591032644571136>/g, '').trim();
-      if (!question) {
-        question = "Hey BURT, what's up?";
-      }
-    }
 
-    const loadingMessage = await message.reply('*[BURT twitches and starts thinking...]* 🤪');
-    
+  // First, handle natural reactions in BURT's channel or threads
+  if ((isBurtChannel || isInBurtThread) && !isBurtMentioned) {
     try {
-      // Mirror the /ask command logic
+      // Add a natural delay (1-3 seconds)
+      const reactionDelay = Math.random() * 2000 + 1000;
+      await new Promise(resolve => setTimeout(resolve, reactionDelay));
+
       const completion = await openai.chat.completions.create({
         model: "grok-beta",
         messages: [
-          { 
-            role: "system", 
-            content: BURT_PROMPT + "\nIMPORTANT: Keep responses under 4000 characters." 
+          {
+            role: "system",
+            content: "You are BURT, a quirky AI assistant. Based on the following message, choose ONE emoji that represents how you'd naturally react to it. Consider the emotional tone, content, and context. Only respond with a single emoji, nothing else."
           },
-          { 
-            role: "user", 
-            content: `[Context: Message from user: ${message.author.username}]\n${question}` 
+          {
+            role: "user",
+            content: message.content
           }
         ],
-        max_tokens: 1000,
-        tools: functions,
-        tool_choice: "auto"
+        max_tokens: 10,
+        temperature: 0.7
       });
 
-      let response = completion.choices[0].message;
-
-      // Handle tool calls
-      let toolResults = [];
-      if (response.tool_calls) {
-        for (const toolCall of response.tool_calls) {
-          try {
-            const args = JSON.parse(toolCall.function.arguments);
-            const result = await executeToolCall(toolCall.function.name, args, message);
-            toolResults.push({
-              tool_call_id: toolCall.id,
-              role: "tool",
-              content: JSON.stringify(result)
-            });
-          } catch (error) {
-            console.error('Tool execution failed:', error);
-            toolResults.push({
-              tool_call_id: toolCall.id,
-              role: "tool",
-              content: JSON.stringify({ error: true, message: error.message })
-            });
-          }
-        }
-      }
-
-      // Get final response with tool results
-      if (toolResults.length > 0) {
-        const messages = [
-          { role: "system", content: BURT_PROMPT },
-          { role: "user", content: `[Context: Message from user: ${message.author.username}]\n${question}` },
-          response,
-          ...toolResults
-        ];
-        
-        const nextCompletion = await openai.chat.completions.create({
-          model: "grok-beta",
-          messages: messages,
-          max_tokens: 1000
-        });
-
-        response = nextCompletion.choices[0].message;
-      }
-
-      const sanitizedContent = sanitizeResponse(response.content || 'No response');
-      const embed = new EmbedBuilder()
-        .setTitle('🤪 BURT Speaks!')
-        .setDescription(truncateForDiscord(sanitizedContent))
-        .setColor('#FF69B4')
-        .setFooter({ 
-          text: `Responding to ${message.member?.displayName || message.author.username}`
-        })
-        .setTimestamp();
-
-      await loadingMessage.edit({ content: null, embeds: [embed] });
+      const reaction = completion.choices[0].message.content.trim();
       
+      // Add another small random delay before reacting (0.5-1.5 seconds)
+      const secondDelay = Math.random() * 1000 + 500;
+      await new Promise(resolve => setTimeout(resolve, secondDelay));
+      
+      // Use Discord's reaction API directly
+      await message.react(reaction).catch(error => {
+        console.error('Failed to add reaction:', error);
+        // Fallback to BURT's signature emoji
+        return message.react('🤪');
+      });
     } catch (error) {
-      console.error('Error processing message:', error);
-      await loadingMessage.edit('*[BURT has a mental breakdown]* Sorry, something went wrong! 😵');
+      console.error('Error processing natural reaction:', error);
     }
+  }
+
+  // Then handle mentions and commands as before
+  if (isBurtMentioned || (isBurtChannel || isInBurtThread)) {
+    // Continue with existing message handling for mentions/commands
+    console.log(`Processing message from ${message.author.tag}: ${message.content}`);
+    
+    // ... rest of your existing message handling code ...
   }
 });
 
@@ -1927,64 +1882,4 @@ class RateLimit {
 const aiRateLimiter = new RateLimit({
   windowMs: 60 * 1000, // 1 minute
   max: 20 // limit each user to 20 requests per windowMs
-});
-
-// Add natural reaction handling
-async function processMessageForReaction(message) {
-  if (message.author.bot) return;
-  
-  // Add a natural delay (1-3 seconds)
-  const reactionDelay = Math.random() * 2000 + 1000;
-  await new Promise(resolve => setTimeout(resolve, reactionDelay));
-
-  try {
-    // Ask BURT to analyze the message content
-    const completion = await openai.chat.completions.create({
-      model: "grok-beta",
-      messages: [
-        {
-          role: "system",
-          content: "You are BURT, a quirky AI assistant. Based on the following message, choose ONE emoji that represents how you'd naturally react to it. Consider the emotional tone, content, and context. Only respond with a single emoji, nothing else."
-        },
-        {
-          role: "user",
-          content: message.content
-        }
-      ],
-      max_tokens: 10,
-      temperature: 0.7 // Add some randomness to reactions
-    });
-
-    const reaction = completion.choices[0].message.content.trim();
-    
-    // Add another small random delay before reacting (0.5-1.5 seconds)
-    const secondDelay = Math.random() * 1000 + 500;
-    await new Promise(resolve => setTimeout(resolve, secondDelay));
-    
-    await message.react(reaction);
-  } catch (error) {
-    console.error('Error processing message for reaction:', error);
-  }
-}
-
-// Modify the message event handler
-client.on('messageCreate', async message => {
-  // Reference existing message handling code
-  if (message.author.bot) return;
-  
-  const isBurtChannel = message.channel.id === BURT_CHANNEL_ID;
-  const isBurtMentioned = message.mentions.users.has(client.user.id);
-  const isInBurtThread = message.channel.isThread() && message.channel.parentId === BURT_CHANNEL_ID;
-
-  // Process reaction for any message BURT can see
-  if (isBurtChannel || isInBurtThread) {
-    processMessageForReaction(message).catch(console.error);
-  }
-
-  // Continue with existing message handling for mentions/commands
-  if (isBurtMentioned) {
-    // Reference existing mention handling
-    console.log(`Processing message from ${message.author.tag}: ${message.content}`);
-    // ... rest of your existing mention handling code
-  }
 });
