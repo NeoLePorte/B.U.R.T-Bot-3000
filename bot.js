@@ -1704,92 +1704,38 @@ async function duckDuckGoSearch(query, limit = 5) {
 }
 
 // Add handleMessage function
-async function handleMessage(message, question) {
-  console.log('=== Initial Completion Request ===');
-  
+async function handleMessage(message, mentionedUsers = []) {
   try {
-    // Get any mentioned user IDs
-    const mentionedUsers = extractMentionedUserIds(message);
-    console.log('Mentioned Users:', mentionedUsers);
-    
-    // Build context with user info if mentions exist
-    let contextInfo = '';
-    if (mentionedUsers.length > 0) {
-      for (const userId of mentionedUsers) {
-        try {
-          const userInfo = await getUserInfo(userId);
-          if (!userInfo.error) {
-            contextInfo += `\nMentioned User: ${userInfo.username} (${userInfo.nickname || 'No nickname'})`;
-          }
-        } catch (error) {
-          console.error('Error getting user info:', error);
-        }
-      }
-    }
+    // ... existing setup code ...
 
-    const messages = [
-      { role: "system", content: BURT_PROMPT },
-      { 
-        role: "user", 
-        content: `[Context: Message from user: ${message.member?.displayName || message.author.username}${contextInfo}]\n${question}`
-      }
-    ];
-
-    console.log('Messages for initial completion:', JSON.stringify(messages, null, 2));
-    
-    const completion = await openai.chat.completions.create({
+    const responseMessage = await openai.chat.completions.create({
       model: "grok-beta",
       messages: messages,
       max_tokens: 1000,
       temperature: 0.7,
-      tools: functions,
-      tool_choice: "auto"
+      tool_choice: "auto",
+      tools: tools
     });
 
-    const responseMessage = completion.choices[0].message;
-    console.log('Initial Response:', JSON.stringify(responseMessage, null, 2));
+    // If there are tool calls, execute them
+    if (responseMessage.choices[0].message.tool_calls) {
+      const toolCalls = responseMessage.choices[0].message.tool_calls;
+      messages.push(responseMessage.choices[0].message);
 
-    // Handle tool calls if present
-    if (responseMessage.tool_calls) {
-      console.log('Tool calls detected:', responseMessage.tool_calls.length);
-      
       // Execute each tool call and collect results
-      const toolResults = new Map();
-      
-      for (const toolCall of responseMessage.tool_calls) {
-        console.log('Executing tool call:', toolCall.function.name);
-        const args = JSON.parse(toolCall.function.arguments);
-        
-        const result = await executeToolCall(toolCall.function.name, args, message);
-        console.log('Tool result:', result);
-
-        // Store result with its tool call ID
-        toolResults.set(toolCall.id, result);
-
-        // Add tool result to messages array
-        messages.push({
-          role: "assistant",
-          content: responseMessage.content,
-          tool_calls: [toolCall]
-        });
-        
-        messages.push({
-          role: "tool",
+      const toolResults = await Promise.all(toolCalls.map(async (toolCall) => {
+        const result = await executeToolCall(toolCall);
+        return {
           tool_call_id: toolCall.id,
+          role: "tool",
           content: JSON.stringify(result)
-        });
-      }
+        };
+      }));
 
-      // Add context about available GIFs to help AI format response
-      if (toolResults.size > 0) {
-        messages.push({
-          role: "system",
-          content: "Remember to naturally incorporate any GIFs into your response as reactions. For example: '*gets excited* [gif: excited_reaction_url]' or 'That makes me feel like... [gif: reaction_url]'"
-        });
-      }
+      // Add tool results to messages
+      messages.push(...toolResults);
 
-      // Get final response after tool calls
-      console.log('Getting final response after tool calls');
+      // Get final response incorporating tool results
       const finalCompletion = await openai.chat.completions.create({
         model: "grok-beta",
         messages: messages,
@@ -1797,63 +1743,58 @@ async function handleMessage(message, question) {
         temperature: 0.7
       });
 
-      console.log('Final Response:', JSON.stringify(finalCompletion.choices[0].message, null, 2));
       return sanitizeResponse(finalCompletion.choices[0].message.content);
     }
 
-    return sanitizeResponse(responseMessage.content);
+    return sanitizeResponse(responseMessage.choices[0].message.content);
   } catch (error) {
     console.error('Error in handleMessage:', error);
     throw error;
   }
 }
 
+// Update searchGif function to handle GIF requests properly
 async function searchGif(args) {
-  const { searchTerm, mood } = args;
-  console.log(`BURT searching for GIF: "${searchTerm}" with mood: "${mood}"`);
-  
   try {
-    // Make sure we have a search term
-    if (!searchTerm) {
-      throw new Error('Search term is required');
-    }
-
-    // Construct the search query
+    const { searchTerm, mood } = args;
+    console.log(`Searching for GIF: ${mood} ${searchTerm} reaction`);
+    
     const query = mood ? `${searchTerm} ${mood}` : searchTerm;
     
     const response = await axios.get('https://tenor.googleapis.com/v2/search', {
       params: {
-        q: query,  // This was missing/undefined before
+        q: query,
         key: process.env.TENOR_API_KEY,
         client_key: 'burt_bot',
         limit: 20,
         random: true
       }
     });
-    
-    if (response.data.results && response.data.results.length > 0) {
-      const randomIndex = Math.floor(Math.random() * response.data.results.length);
-      const selectedGif = response.data.results[randomIndex];
-      
+
+    if (response.data?.results?.length > 0) {
+      const gif = response.data.results[Math.floor(Math.random() * response.data.results.length)];
       return {
-        gifUrl: {
-          url: selectedGif.media_formats.gif.url,
-          title: selectedGif.content_description
-        },
+        gifUrl: gif.media_formats.gif.url,
+        title: gif.content_description,
         mood,
         searchTerm
       };
     }
     
-    throw new Error('No GIFs found');
-    
+    return {
+      gifUrl: null,
+      mood,
+      searchTerm,
+      error: 'No GIFs found'
+    };
+
   } catch (error) {
     console.error('Error searching for GIF:', error);
-    return { 
-      error: true, 
-      message: error.message,
+    return {
+      gifUrl: null,
       mood,
-      searchTerm 
+      searchTerm,
+      error: error.message
     };
   }
 }
