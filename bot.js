@@ -1135,62 +1135,77 @@ const discordTools = functions.map(f => ({
 // Helper Functions
 async function searchTweets(args = {}) {
   try {
-    if (!process.env.TWITTER_BEARER_TOKEN) {
-      console.error('TWITTER_BEARER_TOKEN is not set');
+    // Check for Twitter bearer token
+    const bearerToken = process.env.TWITTER_BEARER_TOKEN;
+    if (!bearerToken) {
+      console.error('TWITTER_BEARER_TOKEN is not set in environment variables');
       return { error: true, message: 'Twitter API configuration missing' };
     }
 
-    // Ensure we're not rate limited
-    if (!canMakeTwitterRequest()) {
-      return { error: true, message: 'Rate limit exceeded. Please try again later.' };
-    }
-
-    // Build query with proper formatting
-    const queryParams = new URLSearchParams({
-      'query': '#fishtanklive -is:retweet', // Exclude retweets
-      'max_results': Math.min(Math.max(10, args.limit || 10), 100), // Default increased to 10
+    // Build query parameters
+    const queryParams = {
+      'query': '#fishtanklive lang:en -is:retweet', // Add language filter and exclude retweets
+      'max_results': Math.min(Math.max(10, args.limit || 10), 100),
       'tweet.fields': 'created_at,author_id,public_metrics,text',
       'expansions': 'author_id',
-      'user.fields': 'username,name'
-    });
+      'user.fields': 'username,name,profile_image_url',
+      'sort_order': 'recency'
+    };
 
-    console.log('Making Twitter API request with params:', queryParams.toString());
+    // Log the request details for debugging
+    console.log('Twitter API Request:', {
+      url: 'https://api.twitter.com/2/tweets/search/recent',
+      params: queryParams,
+      headers: {
+        'Authorization': 'Bearer [REDACTED]',
+        'Content-Type': 'application/json'
+      }
+    });
 
     const response = await axios({
       method: 'get',
-      url: `https://api.twitter.com/2/tweets/search/recent?${queryParams.toString()}`,
+      url: 'https://api.twitter.com/2/tweets/search/recent',
+      params: queryParams,
       headers: {
-        'Authorization': `Bearer ${process.env.TWITTER_BEARER_TOKEN}`,
+        'Authorization': `Bearer ${bearerToken}`,
         'Content-Type': 'application/json'
       },
-      validateStatus: status => status < 500 // Don't throw on 4xx errors
+      validateStatus: null // Allow any status code to be handled in code
     });
 
-    // Handle rate limits explicitly
+    // Log response status and headers for debugging
+    console.log('Twitter API Response:', {
+      status: response.status,
+      statusText: response.statusText,
+      headers: response.headers,
+      data: response.data
+    });
+
+    // Handle different response scenarios
     if (response.status === 429) {
-      const resetTime = response.headers['x-rate-limit-reset'];
+      console.log('Rate limit exceeded:', response.headers);
       return {
         error: true,
-        message: 'Rate limit exceeded',
-        resetTime: resetTime ? new Date(resetTime * 1000) : undefined
+        message: 'Rate limit exceeded. Please try again later.',
+        resetTime: response.headers['x-rate-limit-reset']
       };
     }
 
-    // Handle other error responses
     if (response.status !== 200) {
-      console.error('Twitter API error:', response.data);
+      console.error('Twitter API error:', {
+        status: response.status,
+        data: response.data
+      });
       return {
         error: true,
         message: response.data?.detail || 'Failed to fetch tweets',
-        code: response.status
+        errors: response.data?.errors
       };
     }
 
     // Process successful response
     const tweets = response.data.data || [];
     const users = response.data.includes?.users || [];
-
-    // Map users by ID for easy lookup
     const userMap = new Map(users.map(user => [user.id, user]));
 
     return {
@@ -1201,18 +1216,26 @@ async function searchTweets(args = {}) {
         created_at: tweet.created_at,
         metrics: tweet.public_metrics,
         url: `https://twitter.com/i/web/status/${tweet.id}`,
-        author: userMap.get(tweet.author_id)?.username || 'unknown'
+        author: userMap.get(tweet.author_id)?.username || 'unknown',
+        author_name: userMap.get(tweet.author_id)?.name || 'Unknown User',
+        profile_image: userMap.get(tweet.author_id)?.profile_image_url
       })),
       total: tweets.length,
       meta: response.data.meta
     };
 
   } catch (error) {
-    console.error('Twitter search error:', error.message);
+    console.error('Twitter search error:', {
+      message: error.message,
+      code: error.code,
+      response: error.response?.data
+    });
+    
     return {
       error: true,
       message: 'Failed to search tweets',
-      details: error.message
+      details: error.message,
+      apiError: error.response?.data
     };
   }
 }
