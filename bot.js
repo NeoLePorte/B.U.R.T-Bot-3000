@@ -289,6 +289,26 @@ IMPORTANT: When responding to users:
 
 Remember: Your GIF choices should reflect your Dank as fuck unhinged personality and add to your chaotic energy!
 
+[REACTION POWERS
+- You can react to messages with one or more emojis to express your feelings about it
+- Use addReaction when you want to:
+  * React to something surprising or shocking
+  * Show your confusion or skepticism
+  * Express excitement or happiness
+  * Demonstrate your disgust or disapproval
+  * Add visual humor to your responses
+  * React to memes or jokes
+  * Show your mood through popular reaction GIFs
+- You LOVE using reactions, especially ones that match your chaotic energy and schizo vibe
+- Combine reactions with your text responses for maximum impact
+- You have favorite reactions for different moods:
+  * When confused: "confused math lady", "Jackie Chan confused"
+  * When excited: "mind blown", "excited kid"
+  * When skeptical: "doubt X", "side eye"
+  * When proud: "chef kiss", "leonardo dicaprio cheers"
+
+Remember: Your reaction choices should reflect your Dank as fuck unhinged personality and add to your chaotic energy!
+
 `;
 
 // At the top of your file
@@ -1163,6 +1183,31 @@ const functions = [
         required: ["searchTerm", "mood"]
       }
     }
+  },
+  {
+    type: "function",
+    function: {
+      name: "addReaction",
+      description: "React to a message with one or more emojis to express your feelings about it",
+      parameters: {
+        type: "object",
+        properties: {
+          emojis: {
+            type: "array",
+            items: {
+              type: "string"
+            },
+            description: "Array of 1-3 emojis to react with (use standard Discord emojis)",
+            maxItems: 3
+          },
+          reason: {
+            type: "string",
+            description: "Why you chose these reactions (for logging)",
+          }
+        },
+        required: ["emojis", "reason"]
+      }
+    }
   }
 ];
 
@@ -1446,6 +1491,32 @@ async function executeToolCall(name, args, context) {
         }
         break;
 
+      case 'addReaction':
+        try {
+          console.log(`Adding reactions for reason: ${args.reason}`);
+          
+          // Add reactions sequentially with a small delay
+          for (const emoji of args.emojis) {
+            try {
+              await message.react(emoji);
+              // Add small delay between reactions for visual effect
+              await new Promise(resolve => setTimeout(resolve, 500));
+            } catch (error) {
+              console.error(`Failed to add reaction ${emoji}:`, error);
+            }
+          }
+          
+          return {
+            success: true,
+            reactions: args.emojis,
+            reason: args.reason
+          };
+        } catch (error) {
+          console.error('Error adding reactions:', error);
+          return { error: true, message: error.message };
+        }
+        break;
+
       default:
         throw new Error(`Unknown tool: ${name}`);
     }
@@ -1479,37 +1550,25 @@ client.once('ready', () => {
   console.log(`🤪 BURT is now active in #${burtChannel.name}`);
 });
 
-// Update message handler with better channel verification
+// Update message handling to support both mentions and direct channel messages
 client.on('messageCreate', async message => {
-  // Ignore bot messages to prevent loops
   if (message.author.bot) return;
   
-  // Check if message is in BURT's channel with additional logging
-  if (message.channel.id === BURT_CHANNEL_ID) {
-    console.log(`Processing message in BURT's channel from ${message.author.tag}: ${message.content}`);
+  const isBurtChannel = message.channel.id === BURT_CHANNEL_ID;
+  const isBurtMentioned = message.mentions.users.has(client.user.id);
+  
+  if (isBurtChannel || isBurtMentioned) {
+    console.log(`Processing message from ${message.author.tag}: ${message.content}`);
     
-    // React with contextual emoji
-    try {
-      // Get random emoji based on message sentiment
-      const emoji = await getContextualEmoji(message.content);
-      await message.react(emoji);
-      
-      // Sometimes add multiple reactions for more expression
-      if (Math.random() > 0.7) {
-        const secondaryEmoji = await getSecondaryEmoji(emoji);
-        await message.react(secondaryEmoji);
-      }
-    } catch (error) {
-      console.error('Error adding reaction:', error);
+    let question = message.content;
+    if (isBurtMentioned) {
+      question = question.replace(new RegExp(`<@!?${client.user.id}>`), '').trim();
     }
-
-    // Process message without needing @mention
+    
     const loadingMessage = await message.reply('*[BURT twitches and starts thinking...]* 🤪');
     
     try {
-      const response = await handleMessage(message, message.content);
-      
-      // Create rich embed response
+      const response = await handleMessage(message, question);
       const embed = new EmbedBuilder()
         .setTitle('🤪 BURT Speaks!')
         .setDescription(response)
@@ -1520,15 +1579,6 @@ client.on('messageCreate', async message => {
         .setTimestamp();
 
       await loadingMessage.edit({ content: null, embeds: [embed] });
-
-      // Add thread if the conversation seems interesting
-      if (response.length > 200 && !message.hasThread) {
-        const thread = await message.startThread({
-          name: `BURT's thoughts on ${message.content.slice(0, 50)}...`,
-          autoArchiveDuration: 60
-        });
-        await thread.send("*[BURT has created a thread to continue this fascinating discussion...]* 🧠");
-      }
     } catch (error) {
       console.error('Error processing message:', error);
       await loadingMessage.edit('*[BURT has a mental breakdown]* Sorry, something went wrong! 😵');
@@ -1576,4 +1626,17 @@ async function getContextualEmoji(content) {
     console.error('Error getting contextual emoji:', error);
     return '🤪'; // Default BURT emoji
   }
+}
+
+// Add sanitizeResponse function
+function sanitizeResponse(response) {
+  if (typeof response !== 'string') {
+    console.error('Invalid response type:', typeof response);
+    return 'Error: Invalid response format';
+  }
+  
+  // Remove any system prompt leaks
+  return response.replace(/\[System\].*?\[end input\]/gs, '')
+                .replace(/\[SYSTEM NOTE:.*?\]/gs, '')
+                .trim();
 }
