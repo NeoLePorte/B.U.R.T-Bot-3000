@@ -1748,37 +1748,53 @@ async function handleMessage(message, question) {
 }
 
 // Update searchGif function to handle GIF requests properly
-async function searchGif(args) {
+async function searchGif(searchTerm, mood) {
   try {
-    const { searchTerm, mood } = args;
-    console.log(`Searching for GIF: ${mood} ${searchTerm} reaction`);
+    console.log('Searching for GIF:', mood, searchTerm, 'reaction');
     
-    const query = mood ? `${searchTerm} ${mood}` : searchTerm;
+    // Ensure we have a search term
+    if (!searchTerm) {
+      return {
+        gifUrl: null,
+        mood: mood,
+        searchTerm: searchTerm,
+        error: 'No search term provided'
+      };
+    }
+
+    // Construct search query
+    const query = `${searchTerm} ${mood || ''} reaction`.trim();
     
     const response = await axios.get('https://tenor.googleapis.com/v2/search', {
       params: {
         q: query,
-        key: process.env.TENOR_API_KEY,
+        key: process.env.TENOR_API_KEY, // Make sure to use the environment variable
         client_key: 'burt_bot',
         limit: 20,
         random: true
       }
     });
 
-    if (response.data?.results?.length > 0) {
-      const gif = response.data.results[Math.floor(Math.random() * response.data.results.length)];
+    if (response.data && response.data.results && response.data.results.length > 0) {
+      // Get a random result from the returned GIFs
+      const randomIndex = Math.floor(Math.random() * response.data.results.length);
+      const gif = response.data.results[randomIndex];
+      
       return {
-        gifUrl: gif.media_formats.gif.url,
-        title: gif.content_description,
-        mood,
-        searchTerm
+        gifUrl: {
+          url: gif.media_formats.gif.url,
+          height: gif.media_formats.gif.dims[1],
+          width: gif.media_formats.gif.dims[0]
+        },
+        mood: mood,
+        searchTerm: searchTerm
       };
     }
     
     return {
       gifUrl: null,
-      mood,
-      searchTerm,
+      mood: mood,
+      searchTerm: searchTerm,
       error: 'No GIFs found'
     };
 
@@ -1786,8 +1802,8 @@ async function searchGif(args) {
     console.error('Error searching for GIF:', error);
     return {
       gifUrl: null,
-      mood,
-      searchTerm,
+      mood: mood,
+      searchTerm: searchTerm,
       error: error.message
     };
   }
