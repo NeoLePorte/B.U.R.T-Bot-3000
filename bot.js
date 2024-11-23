@@ -1471,36 +1471,80 @@ client.on('messageCreate', async message => {
     
     let question = message.content;
     if (isBurtMentioned) {
-      // Remove Burt's mention only
       question = question.replace(/<@!?1307591032644571136>/g, '').trim();
       if (!question) {
         question = "Hey BURT, what's up?";
       }
     }
 
-    // Only get user info for the sender if no other users are mentioned
-    const otherMentions = message.mentions.users.filter(user => 
-      user.id !== client.user.id && user.id !== message.author.id
-    );
-
-    let contextInfo = '';
-    if (otherMentions.size === 0) {
-      // Just focus on the current speaker
-      contextInfo = `[Context: Message from user: ${message.author.username}]`;
-    }
-    
     const loadingMessage = await message.reply('*[BURT twitches and starts thinking...]* 🤪');
     
     try {
-      const response = await handleMessage(message, `${contextInfo}\n${question}`);
-      
-      if (!response || response.length === 0) {
-        throw new Error('Empty response received');
+      // Mirror the /ask command logic
+      const completion = await openai.chat.completions.create({
+        model: "grok-beta",
+        messages: [
+          { 
+            role: "system", 
+            content: BURT_PROMPT + "\nIMPORTANT: Keep responses under 4000 characters." 
+          },
+          { 
+            role: "user", 
+            content: `[Context: Message from user: ${message.author.username}]\n${question}` 
+          }
+        ],
+        max_tokens: 1000,
+        tools: functions,
+        tool_choice: "auto"
+      });
+
+      let response = completion.choices[0].message;
+
+      // Handle tool calls
+      let toolResults = [];
+      if (response.tool_calls) {
+        for (const toolCall of response.tool_calls) {
+          try {
+            const args = JSON.parse(toolCall.function.arguments);
+            const result = await executeToolCall(toolCall.function.name, args, message);
+            toolResults.push({
+              tool_call_id: toolCall.id,
+              role: "tool",
+              content: JSON.stringify(result)
+            });
+          } catch (error) {
+            console.error('Tool execution failed:', error);
+            toolResults.push({
+              tool_call_id: toolCall.id,
+              role: "tool",
+              content: JSON.stringify({ error: true, message: error.message })
+            });
+          }
+        }
       }
 
+      // Get final response with tool results
+      if (toolResults.length > 0) {
+        const messages = [
+          { role: "system", content: BURT_PROMPT },
+          { role: "user", content: `[Context: Message from user: ${message.author.username}]\n${question}` },
+          response,
+          ...toolResults
+        ];
+        
+        const nextCompletion = await openai.chat.completions.create({
+          model: "grok-beta",
+          messages: messages,
+          max_tokens: 1000
+        });
+
+        response = nextCompletion.choices[0].message;
+      }
+
+      const sanitizedContent = sanitizeResponse(response.content || 'No response');
       const embed = new EmbedBuilder()
         .setTitle('🤪 BURT Speaks!')
-        .setDescription(truncateForDiscord(response))
+        .setDescription(truncateForDiscord(sanitizedContent))
         .setColor('#FF69B4')
         .setFooter({ 
           text: `Responding to ${message.member?.displayName || message.author.username}`
