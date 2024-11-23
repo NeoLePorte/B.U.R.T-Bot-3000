@@ -1466,14 +1466,15 @@ client.once('ready', () => {
   console.log(`🤪 BURT is now active in #${burtChannel.name}`);
 });
 
-// Update message handling to support both mentions and direct channel messages
+// Update message handling to support threads
 client.on('messageCreate', async message => {
   if (message.author.bot) return;
   
   const isBurtChannel = message.channel.id === BURT_CHANNEL_ID;
   const isBurtMentioned = message.mentions.users.has(client.user.id);
+  const isInBurtThread = message.channel.isThread() && message.channel.parentId === BURT_CHANNEL_ID;
   
-  if (isBurtChannel || isBurtMentioned) {
+  if (isBurtChannel || isBurtMentioned || isInBurtThread) {
     console.log(`Processing message from ${message.author.tag}: ${message.content}`);
     
     let question = message.content;
@@ -1484,7 +1485,28 @@ client.on('messageCreate', async message => {
     const loadingMessage = await message.reply('*[BURT twitches and starts thinking...]* 🤪');
     
     try {
-      const response = await handleMessage(message, question);
+      // Get thread context if in a thread
+      let threadContext = '';
+      if (message.channel.isThread()) {
+        const startMessage = await message.channel.fetchStarterMessage();
+        if (startMessage) {
+          threadContext = `Thread started with: "${startMessage.content}"\n\n`;
+        }
+        
+        // Get last few messages from thread for context
+        const threadMessages = await message.channel.messages.fetch({ limit: 5 });
+        const contextMessages = Array.from(threadMessages.values())
+          .reverse()
+          .slice(0, -1) // Exclude the current message
+          .map(msg => `${msg.author.username}: ${msg.content}`)
+          .join('\n');
+          
+        if (contextMessages) {
+          threadContext += `Recent conversation:\n${contextMessages}\n\n`;
+        }
+      }
+
+      const response = await handleMessage(message, threadContext + question);
       const embed = new EmbedBuilder()
         .setTitle('🤪 BURT Speaks!')
         .setDescription(response)
@@ -1494,15 +1516,25 @@ client.on('messageCreate', async message => {
         })
         .setTimestamp();
 
-      // Add this: If response contains a GIF URL, add it to the embed
+      // Handle GIF display
       const gifMatch = response.match(/\[gif: (.*?)\]/);
       if (gifMatch && gifMatch[1]) {
         embed.setImage(gifMatch[1]);
-        // Remove the [gif: url] text from the response
         embed.setDescription(response.replace(/\[gif: .*?\]/, ''));
       }
 
       await loadingMessage.edit({ content: null, embeds: [embed] });
+      
+      // Create thread if in main channel and not already in a thread
+      if (isBurtChannel && !message.channel.isThread()) {
+        const thread = await message.startThread({
+          name: `BURT Chat: ${message.content.slice(0, 50)}...`,
+          autoArchiveDuration: 60
+        });
+        
+        // Optional: Send a welcome message to the thread
+        await thread.send("*[BURT settles into the thread]* Let's continue our chat here! 🤪");
+      }
     } catch (error) {
       console.error('Error processing message:', error);
       await loadingMessage.edit('*[BURT has a mental breakdown]* Sorry, something went wrong! 😵');
@@ -1670,12 +1702,12 @@ async function duckDuckGoSearch(query, limit = 5) {
 
 // Add handleMessage function
 async function handleMessage(message, question) {
-  console.log(`${LOG_PREFIX} === Initial Completion Request ===`);
+  console.log('=== Initial Completion Request ===');
   
   try {
     // Get any mentioned user IDs
     const mentionedUsers = extractMentionedUserIds(message);
-    console.log(`${LOG_PREFIX} Mentioned Users:`, mentionedUsers);
+    console.log('Mentioned Users:', mentionedUsers);
     
     // Build context with user info if mentions exist
     let contextInfo = '';
@@ -1687,7 +1719,7 @@ async function handleMessage(message, question) {
             contextInfo += `\nMentioned User: ${userInfo.username} (${userInfo.nickname || 'No nickname'})`;
           }
         } catch (error) {
-          console.error(`${LOG_PREFIX} Error getting user info:`, error);
+          console.error('Error getting user info:', error);
         }
       }
     }
@@ -1700,7 +1732,7 @@ async function handleMessage(message, question) {
       }
     ];
 
-    console.log(`${LOG_PREFIX} Messages for initial completion:`, JSON.stringify(messages, null, 2));
+    console.log('Messages for initial completion:', JSON.stringify(messages, null, 2));
     
     const completion = await openai.chat.completions.create({
       model: "grok-beta",
@@ -1712,21 +1744,21 @@ async function handleMessage(message, question) {
     });
 
     const responseMessage = completion.choices[0].message;
-    console.log(`${LOG_PREFIX} Initial Response:`, JSON.stringify(responseMessage, null, 2));
+    console.log('Initial Response:', JSON.stringify(responseMessage, null, 2));
 
     // Handle tool calls if present
     if (responseMessage.tool_calls) {
-      console.log(`${LOG_PREFIX} Tool calls detected:`, responseMessage.tool_calls.length);
+      console.log('Tool calls detected:', responseMessage.tool_calls.length);
       
       // Execute each tool call and collect results
       const toolResults = new Map();
       
       for (const toolCall of responseMessage.tool_calls) {
-        console.log(`${LOG_PREFIX} Executing tool call:`, toolCall.function.name);
+        console.log('Executing tool call:', toolCall.function.name);
         const args = JSON.parse(toolCall.function.arguments);
         
         const result = await executeToolCall(toolCall.function.name, args, message);
-        console.log(`${LOG_PREFIX} Tool result:`, result);
+        console.log('Tool result:', result);
 
         // Store result with its tool call ID
         toolResults.set(toolCall.id, result);
@@ -1754,7 +1786,7 @@ async function handleMessage(message, question) {
       }
 
       // Get final response after tool calls
-      console.log(`${LOG_PREFIX} Getting final response after tool calls`);
+      console.log('Getting final response after tool calls');
       const finalCompletion = await openai.chat.completions.create({
         model: "grok-beta",
         messages: messages,
@@ -1762,20 +1794,20 @@ async function handleMessage(message, question) {
         temperature: 0.7
       });
 
-      console.log(`${LOG_PREFIX} Final Response:`, JSON.stringify(finalCompletion.choices[0].message, null, 2));
+      console.log('Final Response:', JSON.stringify(finalCompletion.choices[0].message, null, 2));
       return sanitizeResponse(finalCompletion.choices[0].message.content);
     }
 
     return sanitizeResponse(responseMessage.content);
   } catch (error) {
-    console.error(`${LOG_PREFIX} Error in handleMessage:`, error);
+    console.error('Error in handleMessage:', error);
     throw error;
   }
 }
 
 async function searchGif(args) {
   try {
-    console.log(`Searching for GIF: ${args.mood} ${args.searchTerm} reaction`);
+    console.log('Searching for GIF:', args.mood, args.searchTerm, 'reaction');
     
     const response = await axios.get('https://tenor.googleapis.com/v2/search', {
       params: {
@@ -1810,11 +1842,11 @@ function extractMentionedUserIds(message) {
 // Add reaction handling function
 async function addReaction(message, emoji) {
   try {
-    console.log(`${LOG_PREFIX} Adding reaction ${emoji} to message`);
+    console.log('Adding reaction', emoji, 'to message');
     await message.react(emoji);
     return { success: true, emoji: emoji };
   } catch (error) {
-    console.error(`${LOG_PREFIX} Error adding reaction:`, error);
+    console.error('Error adding reaction:', error);
     return { error: true, message: error.message };
   }
 }
