@@ -1930,52 +1930,63 @@ async function handleAskCommand(message, question) {
       { role: "user", content: question }
     ];
 
+    // First, get BURT's initial understanding
     const response = await openai.chat.completions.create({
       model: "grok-beta",
       messages: messages,
       tools: tools,
-      tool_choice: "auto" // Let the model decide when to use tools
+      tool_choice: "auto"
     });
 
-    // Handle tool calls if present
-    const responseMessage = response.choices[0].message;
-    if (responseMessage.tool_calls) {
-      // Handle each tool call
-      for (const toolCall of responseMessage.tool_calls) {
-        const functionName = toolCall.function.name;
-        const args = JSON.parse(toolCall.function.arguments);
-        
-        console.log(`Executing tool ${functionName} with args:`, args);
-        
-        // Execute the tool and get result
-        let toolResult;
-        switch (functionName) {
-          case 'searchTweets':
-            toolResult = await searchTweets(args);
-            break;
-          // ... other tool cases ...
-        }
+    let finalResponse = response.choices[0].message;
 
-        // Add the tool result to messages
-        messages.push(responseMessage);
-        messages.push({
-          role: "tool",
-          content: JSON.stringify(toolResult),
-          tool_call_id: toolCall.id
-        });
+    // Check if tools are needed
+    if (finalResponse.tool_calls) {
+      console.log('=== Processing Tool Calls ===');
+      
+      for (const toolCall of finalResponse.tool_calls) {
+        console.log('Tool:', toolCall.function.name);
+        console.log('Arguments:', toolCall.function.arguments);
+
+        // Execute the tool
+        let result;
+        try {
+          const args = JSON.parse(toolCall.function.arguments);
+          switch (toolCall.function.name) {
+            case 'getRecentMessages':
+              result = await getRecentMessages(message.channel, args.limit);
+              break;
+            case 'searchTweets':
+              result = await searchTweets(args);
+              break;
+            // Add other tool cases here
+            default:
+              console.log('Unknown tool:', toolCall.function.name);
+              continue;
+          }
+
+          // Add results to conversation
+          messages.push(finalResponse);
+          messages.push({
+            role: "tool",
+            content: JSON.stringify(result),
+            tool_call_id: toolCall.id
+          });
+        } catch (error) {
+          console.error(`Error executing tool ${toolCall.function.name}:`, error);
+        }
       }
 
-      // Get final response after tool use
-      const finalResponse = await openai.chat.completions.create({
+      // Get final response after tool usage
+      const finalCompletion = await openai.chat.completions.create({
         model: "grok-beta",
-        messages: messages,
-        tools: tools
+        messages: messages
       });
 
-      return finalResponse.choices[0].message.content;
+      finalResponse = finalCompletion.choices[0].message;
     }
 
-    return responseMessage.content;
+    return finalResponse.content;
   } catch (error) {
     console.error('Error in handleAskCommand:', error);
     throw error;
