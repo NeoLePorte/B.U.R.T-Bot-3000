@@ -1516,15 +1516,28 @@ client.on('messageCreate', async message => {
       let response = completion.choices[0].message;
       const toolResults = [];
 
-      // Handle any tool calls
+      // Handle any tool calls - THIS IS THE FIX
       if (response.tool_calls) {
+        console.log('\n=== Processing Tool Calls ===');
         for (const toolCall of response.tool_calls) {
-          const result = await executeToolCall(toolCall, message);
-          toolResults.push({
-            role: "tool",
-            content: JSON.stringify(result),
-            tool_call_id: toolCall.id
-          });
+          console.log(`\nTool: ${toolCall.function.name}`);
+          console.log(`Arguments: ${toolCall.function.arguments}`);
+          try {
+            const args = JSON.parse(toolCall.function.arguments);
+            const result = await executeToolCall(toolCall.function.name, args, message);
+            toolResults.push({
+              tool_call_id: toolCall.id,
+              role: "tool",
+              content: JSON.stringify(result)
+            });
+          } catch (error) {
+            console.error('Tool execution failed:', error);
+            toolResults.push({
+              tool_call_id: toolCall.id,
+              role: "tool",
+              content: JSON.stringify({ error: true, message: error.message })
+            });
+          }
         }
       }
 
