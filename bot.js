@@ -16,26 +16,61 @@ const tools = [
   {
     type: "function",
     function: {
-      name: "searchTweets",
-      description: "Search for recent tweets containing #fishtanklive",
+      name: "getRecentMessages",
+      description: "Get recent messages from the current channel to understand context and conversations",
       parameters: {
         type: "object",
         properties: {
           limit: {
             type: "number",
-            description: "Number of tweets to return (default: 10, max: 100)"
-          },
-          sort_order: {
-            type: "string",
-            description: "Sort order for tweets (recency or relevancy)",
-            enum: ["recency", "relevancy"]
+            description: "Number of messages to retrieve (default: 50, max: 100)"
           }
-        },
-        required: []
+        }
       }
     }
   },
-  // ... other tools ...
+  {
+    type: "function",
+    function: {
+      name: "searchTweets",
+      description: "Search for recent #fishtanklive tweets",
+      parameters: {
+        type: "object",
+        properties: {
+          limit: {
+            type: "number",
+            description: "Number of tweets to return (default: 5, max: 100)"
+          },
+          sort_order: {
+            type: "string",
+            enum: ["recency", "relevancy"],
+            description: "Sort order for tweets"
+          }
+        }
+      }
+    }
+  },
+  {
+    type: "function",
+    function: {
+      name: "webSearch",
+      description: "Search the web for information using DuckDuckGo",
+      parameters: {
+        type: "object",
+        properties: {
+          query: {
+            type: "string",
+            description: "Search query"
+          },
+          limit: {
+            type: "number",
+            description: "Number of results (default: 5)"
+          }
+        },
+        required: ["query"]
+      }
+    }
+  }
 ];
 
 const client = new Client({
@@ -1343,650 +1378,99 @@ async function duckDuckGoSearch(query, limit = 5) {
   }
 }
 
-// Then define executeToolCall after all the tool functions are defined
-async function executeToolCall(name, args, context) {
+// Proper tool execution functions
+async function executeToolCall(toolCall, message) {
+  console.log(`Executing tool: ${toolCall.function.name}`);
+  const args = JSON.parse(toolCall.function.arguments);
+  
   try {
-    console.log(`Executing tool ${name} with args:`, args);
-    
-    switch (name) {
-      case 'getUserInfo':
-        // Make sure we're using the actual Discord ID
-        const userId = args.userId.replace(/[<@!>]/g, '');
-        if (!userId.match(/^\d+$/)) {
-          console.log('Invalid user ID format:', userId);
-          return {
-            error: true,
-            message: 'Invalid user ID format',
-            details: 'User ID must be a Discord snowflake'
-          };
-        }
-        return await getDiscordUserInfo(client, userId);
-
+    switch (toolCall.function.name) {
       case 'getRecentMessages':
-        const channel = context.channel;
-        return await getRecentMessages(channel, args.limit || 50);
-
-      case 'getChannelInfo':
-        return await getChannelInfo(context.channel);
+        const messages = await message.channel.messages.fetch({ 
+          limit: Math.min(args.limit || 50, 100) 
+        });
+        return Array.from(messages.values()).map(msg => ({
+          content: msg.content,
+          author: msg.author.username,
+          timestamp: msg.createdTimestamp
+        }));
 
       case 'searchTweets':
-        if (!canMakeTwitterRequest()) {
-          return {
-            error: true,
-            message: 'Rate limit exceeded',
-            details: 'Please try again later'
-          };
-        }
         return await searchTweets(args);
 
       case 'webSearch':
-        if (!args.query) {
-          return {
-            error: true,
-            message: 'No search query provided'
-          };
-        }
-        return await duckDuckGoSearch(args.query, args.limit);
-
-      case 'analyzeImage':
-        try {
-          const images = getMessageImages(context.message);
-          console.log('Available images:', images);
-
-          if (!images.length) {
-            console.log('No images found to analyze');
-            return { error: true, message: "No images found in message to analyze" };
-          }
-
-          const imageUrl = images[0]; // Use first available image
-          console.log('Analyzing image:', imageUrl);
-          
-          const imageCompletion = await openai.chat.completions.create({
-            model: "grok-vision-beta",
-            messages: [
-              { role: "system", content: BURT_PROMPT },
-              { 
-                role: "user", 
-                content: [
-                  {
-                    type: "image_url",
-                    image_url: {
-                      url: imageUrl,
-                      detail: "high"
-                    }
-                  },
-                  {
-                    type: "text",
-                    text: args.question || "What do you see in this image?"
-                  }
-                ]
-              }
-            ],
-            max_tokens: 1000
-          });
-          
-          return { 
-            description: imageCompletion.choices[0].message.content,
-            imageUrl: imageUrl
-          };
-        } catch (error) {
-          console.error('Error analyzing image:', error);
-          return { error: true, message: error.message };
-        }
-        break;
-
-      case 'searchGif':
-        try {
-          const searchTerm = `${args.mood} ${args.searchTerm} reaction`;
-          console.log('Searching for GIF:', searchTerm);
-          
-          const gifUrl = await searchGif(searchTerm);
-          if (!gifUrl) {
-            return { error: true, message: "No suitable GIF found" };
-          }
-          
-          return { 
-            gifUrl: gifUrl,
-            mood: args.mood,
-            searchTerm: args.searchTerm
-          };
-        } catch (error) {
-          console.error('Error searching GIF:', error);
-          return { error: true, message: error.message };
-        }
-        break;
-
-      case 'addReaction':
-        try {
-          console.log(`Adding reaction: ${args.emoji}`);
-          
-          // Add a natural delay between 500ms and 1500ms
-          const delay = Math.random() * 1000 + 500;
-          await new Promise(resolve => setTimeout(resolve, delay));
-          
-          await context.message.react(args.emoji);
-          return {
-            success: true,
-            emoji: args.emoji
-          };
-        } catch (error) {
-          console.error('Error adding reaction:', error);
-          return { error: true, message: error.message };
-        }
-        break;
+        return await webSearch(args.query, args.limit);
 
       default:
-        throw new Error(`Unknown tool: ${name}`);
+        throw new Error(`Unknown tool: ${toolCall.function.name}`);
     }
   } catch (error) {
-    console.error(`Tool execution failed for ${name}:`, error);
-    return {
-      error: true,
-      message: `Failed to execute ${name}`,
-      details: error.message
-    };
+    console.error(`Tool execution error (${toolCall.function.name}):`, error);
+    return { error: error.message };
   }
 }
 
-// Add this helper function
-function getUserIdFromMention(mention) {
-  // Handle both user mentions and raw IDs
-  const matches = mention.match(/^<@!?(\d+)>$/) || mention.match(/^(\d+)$/);
-  return matches ? matches[1] : null;
-}
-
-// Add BURT's designated channel ID
-const BURT_CHANNEL_ID = '1307958013151150131';
-
-// Add a check to verify channel on startup
-client.once('ready', () => {
-  const burtChannel = client.channels.cache.get(BURT_CHANNEL_ID);
-  if (!burtChannel) {
-    console.error('⚠️ BURT\'s channel not found! Please check the channel ID.');
-    return;
-  }
-  console.log(`🤪 BURT is now active in #${burtChannel.name}`);
-});
-
-// Modify the message event handler to combine all message handling in one place
-client.on('messageCreate', async message => {
-  try {
-    // Ignore messages from bots
-    if (message.author.bot) return;
-
-    // Only process messages in BURT's dedicated channel
-    if (message.channel.id === '1307958013151150131') {
-      console.log('Message in BURT\'s channel:', {
-        content: message.content,
-        author: message.author.tag
-      });
-      
-      await message.channel.sendTyping();
-
-      try {
-        const response = await handleAskCommand(message, message.content);
-        
-        // Split long messages if needed
-        if (response.length > 2000) {
-          const chunks = response.match(/.{1,2000}/g) || [];
-          for (const chunk of chunks) {
-            await message.reply(chunk);
-          }
-        } else {
-          await message.reply(response);
-        }
-      } catch (error) {
-        console.error('Error processing channel message:', error);
-        await message.reply('Sorry, I encountered an error while processing your message.');
-      }
-    }
-  } catch (error) {
-    console.error('Error in messageCreate handler:', error);
-  }
-});
-
-// Helper function to ensure we never pass empty strings
-function truncateForDiscord(text, maxLength = 4096) {
-  if (!text || typeof text !== 'string') {
-    return 'BURT.exe has stopped working... 🤖💫';
-  }
-  if (text.length <= maxLength) return text;
-  return text.slice(0, maxLength - 3) + '...';
-}
-
-// Add reaction handling
-client.on('messageReactionAdd', async (reaction, user) => {
-  if (user.bot) return;
-  
-  if (reaction.message.channel.id === BURT_CHANNEL_ID) {
-    // React back to user reactions sometimes
-    if (Math.random() > 0.5) {
-      try {
-        await reaction.message.react(reaction.emoji);
-      } catch (error) {
-        console.error('Error reacting to reaction:', error);
-      }
-    }
-  }
-});
-
-// Helper function to get contextual emoji
-async function getContextualEmoji(content) {
-  // Use BURT's AI to analyze message sentiment and choose appropriate emoji
-  try {
-    const completion = await openai.chat.completions.create({
-      model: "grok-beta",
-      messages: [
-        {
-          role: "system",
-          content: "You are BURT. Choose a single appropriate emoji for the following message. Respond with just the emoji."
-        },
-        {
-          role: "user",
-          content: content
-        }
-      ],
-      max_tokens: 10
-    });
-    
-    return completion.choices[0].message.content.trim();
-  } catch (error) {
-    console.error('Error getting contextual emoji:', error);
-    return '🤪'; // Default BURT emoji
-  }
-}
-
-// Add sanitizeResponse function
-function sanitizeResponse(response) {
-  if (typeof response !== 'string') {
-    console.error('Invalid response type:', typeof response);
-    return 'Error: Invalid response format';
-  }
-  
-  // Remove any system prompt leaks
-  return response.replace(/\[System\].*?\[end input\]/gs, '')
-                .replace(/\[SYSTEM NOTE:.*?\]/gs, '')
-                .trim();
-}
-
-// Add core functions
-async function getRecentMessages(channel, limit = 50) {
-  try {
-    const messages = await channel.messages.fetch({ limit: Math.min(limit, 100) });
-    return Array.from(messages.values()).map(msg => ({
-      content: msg.content,
-      author: msg.author.username,
-      timestamp: msg.createdTimestamp
-    }));
-  } catch (error) {
-    console.error('Error fetching recent messages:', error);
-    return { error: true, message: error.message };
-  }
-}
-
-async function getChannelInfo(channel) {
-  try {
-    return {
-      name: channel.name,
-      topic: channel.topic,
-      memberCount: channel.members?.size,
-      isNsfw: channel.nsfw,
-      createdAt: channel.createdAt
-    };
-  } catch (error) {
-    console.error('Error fetching channel info:', error);
-    return { error: true, message: error.message };
-  }
-}
-
-async function getUserInfo(userId) {
-  try {
-    const guild = client.guilds.cache.first();
-    const member = await guild.members.fetch(userId);
-    
-    return {
-      username: member.user.username,
-      nickname: member.nickname,
-      roles: Array.from(member.roles.cache.values()).map(role => role.name),
-      joinedAt: member.joinedAt,
-      isBot: member.user.bot
-    };
-  } catch (error) {
-    console.error('Error fetching user info:', error);
-    return { error: true, message: error.message };
-  }
-}
-
-// Add Twitter/X API integration
-let lastTwitterRequest = 0;
-const TWITTER_RATE_LIMIT = {
-  requests: 0,
-  resetTime: Date.now(),
-  limit: 450, // Requests per 15 minutes
-  window: 15 * 60 * 1000 // 15 minutes in milliseconds
-};
-
-function canMakeTwitterRequest() {
-  const now = Date.now();
-  
-  // Reset counter if window has passed
-  if (now > TWITTER_RATE_LIMIT.resetTime) {
-    TWITTER_RATE_LIMIT.requests = 0;
-    TWITTER_RATE_LIMIT.resetTime = now + TWITTER_RATE_LIMIT.window;
-  }
-
-  return TWITTER_RATE_LIMIT.requests < TWITTER_RATE_LIMIT.limit;
-}
-
-async function searchTweets(args = {}) {
-  try {
-    const response = await axios.get('https://api.twitter.com/2/tweets/search/recent', {
-      headers: {
-        'Authorization': `Bearer ${process.env.TWITTER_BEARER_TOKEN}`
-      },
-      params: {
-        query: '#fishtanklive',
-        max_results: args.limit || 10,
-        'tweet.fields': 'created_at,author_id,public_metrics'
-      }
-    });
-    
-    return response.data.data || [];
-  } catch (error) {
-    console.error('Error searching tweets:', error);
-    return { error: true, message: error.message };
-  }
-}
-
-// Add web search functionality
-async function duckDuckGoSearch(query, limit = 5) {
-  try {
-    const response = await axios.get('https://api.duckduckgo.com/', {
-      params: {
-        q: query,
-        format: 'json'
-      }
-    });
-    
-    return response.data.RelatedTopics
-      .slice(0, limit)
-      .map(topic => ({
-        title: topic.Text,
-        url: topic.FirstURL
-      }));
-  } catch (error) {
-    console.error('Error in web search:', error);
-    return { error: true, message: error.message };
-  }
-}
-
-// Add handleMessage function
-async function handleMessage(message, question) {
-  try {
-    // Get recent messages for context
-    const recentMessages = await message.channel.messages.fetch({ limit: 50 });
-    const messages = [
-      { role: "system", content: BURT_PROMPT },
-      { 
-        role: "user", 
-        content: `[Context: Message from user: ${message.author.username}]\n${question}` 
-      }
-    ];
-    
-    // Rest of your handleMessage logic...
-  } catch (error) {
-    console.error('Error in handleMessage:', error);
-    throw error;
-  }
-}
-
-// Update searchGif function to handle GIF requests properly
-async function searchGif(searchTerm, mood) {
-  try {
-    console.log('Searching for GIF:', mood, searchTerm, 'reaction');
-    
-    // Ensure we have a search term
-    if (!searchTerm) {
-      return {
-        gifUrl: null,
-        mood: mood,
-        searchTerm: searchTerm,
-        error: 'No search term provided'
-      };
-    }
-
-    // Construct search query
-    const query = `${searchTerm} ${mood || ''} reaction`.trim();
-    
-    const response = await axios.get('https://tenor.googleapis.com/v2/search', {
-      params: {
-        q: query,
-        key: process.env.TENOR_API_KEY, // Make sure to use the environment variable
-        client_key: 'burt_bot',
-        limit: 20,
-        random: true
-      }
-    });
-
-    if (response.data && response.data.results && response.data.results.length > 0) {
-      // Get a random result from the returned GIFs
-      const randomIndex = Math.floor(Math.random() * response.data.results.length);
-      const gif = response.data.results[randomIndex];
-      
-      return {
-        gifUrl: {
-          url: gif.media_formats.gif.url,
-          height: gif.media_formats.gif.dims[1],
-          width: gif.media_formats.gif.dims[0]
-        },
-        mood: mood,
-        searchTerm: searchTerm
-      };
-    }
-    
-    return {
-      gifUrl: null,
-      mood: mood,
-      searchTerm: searchTerm,
-      error: 'No GIFs found'
-    };
-
-  } catch (error) {
-    console.error('Error searching for GIF:', error);
-    return {
-      gifUrl: null,
-      mood: mood,
-      searchTerm: searchTerm,
-      error: error.message
-    };
-  }
-}
-
-// Add this helper function near the top
-function extractMentionedUserIds(message) {
-  return Array.from(message.mentions.users.keys());
-}
-
-// Add reaction handling function
-async function addReaction(message, emoji) {
-  try {
-    console.log('Adding reaction', emoji, 'to message');
-    await message.react(emoji);
-    return { success: true, emoji: emoji };
-  } catch (error) {
-    console.error('Error adding reaction:', error);
-    return { error: true, message: error.message };
-  }
-}
-
-// Add getDiscordUserInfo function near other utility functions
-async function getDiscordUserInfo(client, userId) {
-  try {
-    const cleanId = userId.replace(/[<@!>]/g, '');
-    const user = await client.users.fetch(cleanId);
-    
-    if (!user) {
-      return {
-        error: true,
-        message: 'User not found'
-      };
-    }
-
-    // Get guild member if possible
-    let member;
-    try {
-      // Get the first guild this user shares with the bot
-      const guilds = client.guilds.cache;
-      for (const [_, guild] of guilds) {
-        member = await guild.members.fetch(cleanId).catch(() => null);
-        if (member) break;
-      }
-    } catch (err) {
-      console.log('Could not fetch member info:', err);
-    }
-
-    return {
-      id: user.id,
-      username: user.username,
-      displayName: member?.displayName || user.username,
-      avatar: user.avatarURL(),
-      joinedAt: member?.joinedAt?.toISOString(),
-      roles: member?.roles?.cache.map(r => r.name) || [],
-      bot: user.bot
-    };
-  } catch (error) {
-    console.error('Error fetching user info:', error);
-    return {
-      error: true,
-      message: 'Failed to fetch user info',
-      details: error.message
-    };
-  }
-}
-
-// Add this helper to truncate long messages
-function truncateMessage(message, maxLength = 4000) {
-  if (message.length <= maxLength) return message;
-  return message.slice(0, maxLength - 3) + '...';
-}
-
-// Add at the top with other utility functions
-function truncateForDiscord(text, maxLength = 4096) {
-  if (!text || typeof text !== 'string') {
-    return 'BURT.exe has stopped working... 🤖💫';
-  }
-  if (text.length <= maxLength) return text;
-  return text.slice(0, maxLength - 3) + '...';
-}
-
-// Add cleanup for galleries
-function cleanupOldGalleries() {
-  const now = Date.now();
-  for (const [channelId, gallery] of activeGalleries.entries()) {
-    if (now - gallery.createdAt > GALLERY_TIMEOUT) {
-      activeGalleries.delete(channelId);
-    }
-  }
-}
-
-// Run cleanup periodically
-setInterval(cleanupOldGalleries, GALLERY_TIMEOUT);
-
-// Add this simple rate limiter implementation
-class RateLimit {
-  constructor(options) {
-    this.windowMs = options.windowMs || 60000; // Default 1 minute
-    this.max = options.max || 30; // Default 30 requests per window
-    this.requests = new Map();
-  }
-
-  tryRequest(userId) {
-    const now = Date.now();
-    const userRequests = this.requests.get(userId) || [];
-    
-    // Clean up old requests
-    const validRequests = userRequests.filter(time => now - time < this.windowMs);
-    
-    if (validRequests.length >= this.max) {
-      return false;
-    }
-    
-    validRequests.push(now);
-    this.requests.set(userId, validRequests);
-    return true;
-  }
-}
-
-const aiRateLimiter = new RateLimit({
-  windowMs: 60 * 1000, // 1 minute
-  max: 20 // limit each user to 20 requests per windowMs
-});
-
-// Update message handling to use proper tool calling
+// Main handler following the correct flow
 async function handleAskCommand(message, question) {
   try {
-    const messages = [
+    console.log('=== Starting Ask Command ===');
+    console.log('Question:', question);
+
+    // Initial conversation array
+    const conversation = [
       { role: "system", content: BURT_PROMPT },
       { role: "user", content: question }
     ];
 
-    // First, get BURT's initial understanding
-    const response = await openai.chat.completions.create({
+    // 1. Initial request to see if tools are needed
+    const initialResponse = await openai.chat.completions.create({
       model: "grok-beta",
-      messages: messages,
+      messages: conversation,
       tools: tools,
       tool_choice: "auto"
     });
 
-    let finalResponse = response.choices[0].message;
+    console.log('=== Initial Response ===');
+    const assistantMessage = initialResponse.choices[0].message;
+    console.log('Assistant message:', assistantMessage);
 
-    // Check if tools are needed
-    if (finalResponse.tool_calls) {
+    // 2. If tools are needed, execute them and add results to conversation
+    if (assistantMessage.tool_calls) {
       console.log('=== Processing Tool Calls ===');
       
-      for (const toolCall of finalResponse.tool_calls) {
-        console.log('Tool:', toolCall.function.name);
+      // Add the assistant's message with tool calls
+      conversation.push(assistantMessage);
+
+      // Execute each tool call
+      for (const toolCall of assistantMessage.tool_calls) {
+        console.log(`Tool: ${toolCall.function.name}`);
         console.log('Arguments:', toolCall.function.arguments);
 
-        // Execute the tool
-        let result;
-        try {
-          const args = JSON.parse(toolCall.function.arguments);
-          switch (toolCall.function.name) {
-            case 'getRecentMessages':
-              result = await getRecentMessages(message.channel, args.limit);
-              break;
-            case 'searchTweets':
-              result = await searchTweets(args);
-              break;
-            // Add other tool cases here
-            default:
-              console.log('Unknown tool:', toolCall.function.name);
-              continue;
-          }
+        // Execute tool and get result
+        const result = await executeToolCall(toolCall, message);
+        console.log('Tool result:', result);
 
-          // Add results to conversation
-          messages.push(finalResponse);
-          messages.push({
-            role: "tool",
-            content: JSON.stringify(result),
-            tool_call_id: toolCall.id
-          });
-        } catch (error) {
-          console.error(`Error executing tool ${toolCall.function.name}:`, error);
-        }
+        // Add tool result to conversation
+        conversation.push({
+          role: "tool",
+          content: JSON.stringify(result),
+          tool_call_id: toolCall.id
+        });
       }
 
-      // Get final response after tool usage
-      const finalCompletion = await openai.chat.completions.create({
+      // 3. Final request with tool results as context
+      console.log('=== Getting Final Response ===');
+      const finalResponse = await openai.chat.completions.create({
         model: "grok-beta",
-        messages: messages
+        messages: conversation
       });
 
-      finalResponse = finalCompletion.choices[0].message;
+      return finalResponse.choices[0].message.content;
     }
 
-    return finalResponse.content;
+    // If no tools were needed, return the initial response
+    return assistantMessage.content;
+
   } catch (error) {
     console.error('Error in handleAskCommand:', error);
     throw error;
