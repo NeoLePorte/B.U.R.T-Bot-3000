@@ -1117,7 +1117,7 @@ const functions = [
         properties: {
           emoji: {
             type: "string",
-            description: "The emoji to react with (e.g., '👍', '❤️', '🔧', etc.)"
+            description: "The emoji to react with (e.g., '����', '❤️', '🔧', etc.)"
           }
         },
         required: ["emoji"]
@@ -1509,10 +1509,21 @@ client.on('messageCreate', async message => {
         .setTimestamp();
 
       // Handle GIF display
-      const gifMatch = response.match(/\[gif: (.*?)\]/);
-      if (gifMatch && gifMatch[1]) {
-        embed.setImage(gifMatch[1]);
-        embed.setDescription(response.replace(/\[gif: .*?\]/, ''));
+      if (response.content.includes('[gif:')) {
+        const gifMatch = response.content.match(/\[gif: (.*?)\]/);
+        if (gifMatch) {
+          // Remove the [gif: xyz] placeholder from the content
+          const cleanContent = response.content.replace(/\[gif: .*?\]/, '');
+          
+          // Get the actual GIF URL from the tool result
+          const gifUrl = toolResults.find(r => r.gifUrl)?.gifUrl?.url;
+          
+          if (gifUrl) {
+            embed.setImage(gifUrl);
+          }
+          
+          embed.setDescription(cleanContent);
+        }
       }
 
       await loadingMessage.edit({ content: null, embeds: [embed] });
@@ -1798,30 +1809,40 @@ async function handleMessage(message, question) {
 }
 
 async function searchGif(args) {
+  const { searchTerm, mood } = args;
+  console.log(`BURT searching for GIF: "${searchTerm}" with mood: "${mood}"`);
+  
   try {
-    console.log('Searching for GIF:', args.mood, args.searchTerm, 'reaction');
-    
+    // Get GIF from Tenor with BURT's raw search term
     const response = await axios.get('https://tenor.googleapis.com/v2/search', {
       params: {
-        q: `${args.mood} ${args.searchTerm} reaction`,
-        key: TENOR_API_KEY,
+        q: searchTerm,  // Use BURT's exact search query
+        key: process.env.TENOR_API_KEY,
         client_key: 'burt_bot',
-        limit: 1,
-        media_filter: 'minimal'
+        limit: 20,
+        random: true
       }
     });
-
+    
     if (response.data.results && response.data.results.length > 0) {
-      const gif = response.data.results[0];
+      // Randomly select a GIF from the results
+      const randomIndex = Math.floor(Math.random() * response.data.results.length);
+      const selectedGif = response.data.results[randomIndex];
+      
       return {
-        url: gif.media_formats.gif.url,
-        title: gif.title
+        gifUrl: {
+          url: selectedGif.media_formats.gif.url,
+          title: selectedGif.content_description
+        },
+        mood,
+        searchTerm
       };
     }
     
-    return { error: true, message: 'No GIFs found' };
+    throw new Error('No GIFs found');
+    
   } catch (error) {
-    console.error('Error searching GIF:', error);
+    console.error('Error searching for GIF:', error);
     return { error: true, message: error.message };
   }
 }
