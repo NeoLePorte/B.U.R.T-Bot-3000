@@ -1133,86 +1133,85 @@ const discordTools = functions.map(f => ({
 }));
 
 // Helper Functions
-async function searchTweets(args) {
+async function searchTweets(args = {}) {
   try {
-    // Check rate limits
+    if (!process.env.TWITTER_BEARER_TOKEN) {
+      console.error('TWITTER_BEARER_TOKEN is not set');
+      return { error: true, message: 'Twitter API configuration missing' };
+    }
+
+    // Ensure we're not rate limited
     if (!canMakeTwitterRequest()) {
-      return {
-        error: true,
-        message: 'Rate limit exceeded',
-        details: 'Please try again later'
-      };
+      return { error: true, message: 'Rate limit exceeded. Please try again later.' };
     }
 
-    // Check cache first
-    const cacheKey = `tweets_${args.limit}_${args.sort_order}`;
-    const cachedResults = tweetCache.get(cacheKey);
-    if (cachedResults) {
-      return cachedResults;
-    }
-
-    // Prepare search parameters
-    const query = encodeURIComponent('#fishtanklive');
-    const limit = Math.min(Math.max(10, args.limit || 10), 100);
-    const sort = args.sort_order || 'recency';
-
-    console.log('Searching tweets with params:', {
-      query,
-      limit,
-      sort
+    // Build query with proper formatting
+    const queryParams = new URLSearchParams({
+      'query': '#fishtanklive -is:retweet', // Exclude retweets
+      'max_results': Math.min(Math.max(5, args.limit || 5), 100), // Between 5 and 100
+      'tweet.fields': 'created_at,author_id,public_metrics,text',
+      'expansions': 'author_id',
+      'user.fields': 'username,name'
     });
 
-    // Make request to Twitter API
-    const response = await fetch(`https://api.twitter.com/2/tweets/search/recent?query=${query}&max_results=${limit}&tweet.fields=created_at,public_metrics`, {
+    console.log('Making Twitter API request with params:', queryParams.toString());
+
+    const response = await axios({
+      method: 'get',
+      url: `https://api.twitter.com/2/tweets/search/recent?${queryParams.toString()}`,
       headers: {
-        'Authorization': `Bearer ${process.env.TWITTER_BEARER_TOKEN}`
-      }
+        'Authorization': `Bearer ${process.env.TWITTER_BEARER_TOKEN}`,
+        'Content-Type': 'application/json'
+      },
+      validateStatus: status => status < 500 // Don't throw on 4xx errors
     });
 
-    // Handle rate limits
+    // Handle rate limits explicitly
     if (response.status === 429) {
-      console.log('Twitter rate limit exceeded');
+      const resetTime = response.headers['x-rate-limit-reset'];
       return {
         error: true,
         message: 'Rate limit exceeded',
-        details: 'Please try again later'
+        resetTime: resetTime ? new Date(resetTime * 1000) : undefined
       };
     }
 
-    if (!response.ok) {
-      throw new Error(`Twitter API error: ${response.status} ${response.statusText}`);
+    // Handle other error responses
+    if (response.status !== 200) {
+      console.error('Twitter API error:', response.data);
+      return {
+        error: true,
+        message: response.data?.detail || 'Failed to fetch tweets',
+        code: response.status
+      };
     }
 
-    // Increment rate limit counter
-    TWITTER_RATE_LIMIT.requests++;
+    // Process successful response
+    const tweets = response.data.data || [];
+    const users = response.data.includes?.users || [];
 
-    const data = await response.json();
-    console.log('Twitter API Response:', JSON.stringify(data, null, 2));
+    // Map users by ID for easy lookup
+    const userMap = new Map(users.map(user => [user.id, user]));
 
-    const results = {
+    return {
       success: true,
-      tweets: data.data?.map(tweet => ({
+      tweets: tweets.map(tweet => ({
         id: tweet.id,
         text: tweet.text,
         created_at: tweet.created_at,
         metrics: tweet.public_metrics,
-        url: `https://twitter.com/i/web/status/${tweet.id}`
-      })) || [],
-      total: data.meta?.result_count || 0,
-      newest_id: data.meta?.newest_id,
-      oldest_id: data.meta?.oldest_id
+        url: `https://twitter.com/i/web/status/${tweet.id}`,
+        author: userMap.get(tweet.author_id)?.username || 'unknown'
+      })),
+      total: tweets.length,
+      meta: response.data.meta
     };
 
-    // Cache the results
-    tweetCache.set(cacheKey, results);
-
-    return results;
-
   } catch (error) {
-    console.error('Twitter search error:', error);
+    console.error('Twitter search error:', error.message);
     return {
       error: true,
-      message: 'Search failed',
+      message: 'Failed to search tweets',
       details: error.message
     };
   }
@@ -1692,15 +1691,23 @@ async function getUserInfo(userId) {
 
 // Add Twitter/X API integration
 let lastTwitterRequest = 0;
-const TWITTER_RATE_LIMIT = 1000 * 60; // 1 minute
+const TWITTER_RATE_LIMIT = {
+  requests: 0,
+  resetTime: Date.now(),
+  limit: 450, // Requests per 15 minutes
+  window: 15 * 60 * 1000 // 15 minutes in milliseconds
+};
 
 function canMakeTwitterRequest() {
   const now = Date.now();
-  if (now - lastTwitterRequest < TWITTER_RATE_LIMIT) {
-    return false;
+  
+  // Reset counter if window has passed
+  if (now > TWITTER_RATE_LIMIT.resetTime) {
+    TWITTER_RATE_LIMIT.requests = 0;
+    TWITTER_RATE_LIMIT.resetTime = now + TWITTER_RATE_LIMIT.window;
   }
-  lastTwitterRequest = now;
-  return true;
+
+  return TWITTER_RATE_LIMIT.requests < TWITTER_RATE_LIMIT.limit;
 }
 
 async function searchTweets(args = {}) {
