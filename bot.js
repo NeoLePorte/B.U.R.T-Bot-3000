@@ -17,7 +17,7 @@ const tools = [
     type: "function",
     function: {
       name: "getRecentMessages",
-      description: "Get recent messages from the current Discord channel",
+      description: "PRIORITY TOOL: Get recent messages from the current Discord channel. Use this FIRST when asked about server activity or recent conversations.",
       parameters: {
         type: "object",
         properties: {
@@ -34,7 +34,7 @@ const tools = [
     type: "function",
     function: {
       name: "searchTweets",
-      description: "Search for recent #fishtanklive tweets",
+      description: "Search for #fishtanklive tweets. Only use when specifically asked about Twitter or external social media.",
       parameters: {
         type: "object",
         properties: {
@@ -846,104 +846,74 @@ client.on('interactionCreate', async interaction => {
 
           console.log(`Processing question from ${interaction.user.username}: ${question}`);
 
-          // Extract mentioned users from the question
-          const mentionedUsers = Array.from(question.matchAll(/<@!?(\d+)>/g))
-            .map(match => ({
-              id: match[1],
-              mention: match[0]
-            }));
+          // Keywords that should trigger getRecentMessages
+          const serverKeywords = [
+            'server', 'channel', 'chat', 'messages', 'conversation',
+            'going on', 'happening', 'what\'s up', 'whats up',
+            'recent', 'latest', 'activity'
+          ];
 
-          console.log('Mentioned Users:', mentionedUsers);
+          // Check if question contains server-related keywords
+          const shouldGetMessages = serverKeywords.some(keyword => 
+            question.toLowerCase().includes(keyword)
+          );
 
-          // Initial completion request
-          console.log('\n=== Initial Completion Request ===');
-          const completion = await openai.chat.completions.create({
+          console.log('Server keywords detected:', shouldGetMessages);
+
+          let conversation = [
+            { role: "system", content: BURT_PROMPT },
+            { 
+              role: "user", 
+              content: `[Command: ${question}]\nIMPORTANT: When checking server activity, ALWAYS use getRecentMessages first before any other tools. Only use searchTweets when specifically asked about Twitter content.`
+            }
+          ];
+
+          // Force getRecentMessages for server-related queries
+          const initialResponse = await openai.chat.completions.create({
             model: "grok-beta",
-            messages: [
-              { 
-                role: "system", 
-                content: BURT_PROMPT + "\nIMPORTANT: Keep responses under 4000 characters." 
-              },
-              { 
-                role: "user", 
-                content: `[Context: Command from user: ${interaction.user.username}]\n${question}` 
-              }
-            ],
-            max_tokens: 1000,
+            messages: conversation,
             tools: tools,
-            tool_choice: "auto"
+            tool_choice: shouldGetMessages ? {
+              type: "function",
+              function: { name: "getRecentMessages" }
+            } : "auto"
           });
 
-          let response = completion.choices[0].message;
-          console.log('\nInitial Response:', JSON.stringify(response, null, 2));
+          console.log('=== Initial Response Received ===');
+          console.log('Tool choice forced:', shouldGetMessages);
+          const assistantMessage = initialResponse.choices[0].message;
+          console.log('Assistant message:', JSON.stringify(assistantMessage, null, 2));
 
-          // Handle tool calls
-          let toolResults = [];
-          if (response.tool_calls) {
+          conversation.push(assistantMessage);
+
+          if (assistantMessage.tool_calls) {
             console.log('\n=== Processing Tool Calls ===');
-            for (const toolCall of response.tool_calls) {
-              console.log(`\nTool: ${toolCall.function.name}`);
-              console.log(`Arguments: ${toolCall.function.arguments}`);
-              try {
-                const args = JSON.parse(toolCall.function.arguments);
-                const result = await executeToolCall(toolCall, interaction);
-                toolResults.push({
-                  tool_call_id: toolCall.id,
-                  role: "tool",
-                  content: JSON.stringify(result)
-                });
-              } catch (error) {
-                console.error('Tool execution failed:', error);
-                toolResults.push({
-                  tool_call_id: toolCall.id,
-                  role: "tool",
-                  content: JSON.stringify({ error: true, message: error.message })
-                });
-              }
-            }
-          }
+            console.log('Number of tool calls:', assistantMessage.tool_calls.length);
 
-          // Get final response with tool results
-          if (toolResults.length > 0) {
-            const messages = [
-              { 
-                role: "system", 
-                content: BURT_PROMPT 
-              },
-              { 
-                role: "user", 
-                content: `[Context: Command from user: ${interaction.user.username}]\n${question}`
-              },
-              response,
-              ...toolResults
-            ];
-            
-            console.log('Messages for final completion:', JSON.stringify(messages, null, 2));
-            
-            const nextCompletion = await openai.chat.completions.create({
+            for (const toolCall of assistantMessage.tool_calls) {
+              console.log(`\nExecuting tool call ${toolCall.id}:`, toolCall.function.name);
+              
+              const result = await executeToolCall(toolCall, interaction);
+              console.log('Tool result:', JSON.stringify(result, null, 2));
+
+              conversation.push({
+                role: "tool",
+                content: JSON.stringify(result),
+                tool_call_id: toolCall.id
+              });
+            }
+
+            // Get final response with tool results
+            console.log('\n=== Getting Final Response ===');
+            const finalResponse = await openai.chat.completions.create({
               model: "grok-beta",
-              messages: messages,
-              max_tokens: 1000
+              messages: conversation
             });
 
-            response = nextCompletion.choices[0].message;
+            return sanitizeResponse(finalResponse.choices[0].message.content);
           }
 
-          // Send final response
-          const sanitizedContent = sanitizeResponse(response.content || 'No response');
-          const embed = new EmbedBuilder()
-            .setTitle('🤪 BURT Speaks! ')
-            .setDescription(sanitizedContent)
-            .setColor('#FF69B4')
-            .setFooter({ 
-              text: `Responding to ${interaction.user.username} [Yes, they seem nice... NO, I won't share the secret!]` 
-            })
-            .setTimestamp();
-
-          await interaction.editReply({ 
-            embeds: [embed],
-            ephemeral: true
-          });
+          return sanitizeResponse(assistantMessage.content);
 
         } catch (error) {
           console.error('Error in ask command:', error);
@@ -1423,35 +1393,42 @@ async function handleAskCommand(message, question) {
   try {
     console.log('\n=== Starting Ask Command ===');
     console.log('Question:', question);
-    console.log('Channel ID:', message.channel.id);
 
-    // Initialize conversation
+    // Keywords that should trigger getRecentMessages
+    const serverKeywords = [
+      'server', 'channel', 'chat', 'messages', 'conversation',
+      'going on', 'happening', 'what\'s up', 'whats up',
+      'recent', 'latest', 'activity'
+    ];
+
+    // Check if question contains server-related keywords
+    const shouldGetMessages = serverKeywords.some(keyword => 
+      question.toLowerCase().includes(keyword)
+    );
+
+    console.log('Server keywords detected:', shouldGetMessages);
+
     let conversation = [
       { role: "system", content: BURT_PROMPT },
       { 
         role: "user", 
-        content: `[Command: ${question}]\nNote: When asked about server activity or messages, always use getRecentMessages tool first.`
+        content: `[Command: ${question}]\nIMPORTANT: When checking server activity, ALWAYS use getRecentMessages first before any other tools. Only use searchTweets when specifically asked about Twitter content.`
       }
     ];
 
-    // Initial request with forced tool choice for certain queries
-    const shouldForceTools = question.toLowerCase().includes('server') || 
-                           question.toLowerCase().includes('messages') ||
-                           question.toLowerCase().includes('going on');
-
-    console.log('Should force tools:', shouldForceTools);
-
+    // Force getRecentMessages for server-related queries
     const initialResponse = await openai.chat.completions.create({
       model: "grok-beta",
       messages: conversation,
       tools: tools,
-      tool_choice: shouldForceTools ? {
+      tool_choice: shouldGetMessages ? {
         type: "function",
         function: { name: "getRecentMessages" }
       } : "auto"
     });
 
     console.log('=== Initial Response Received ===');
+    console.log('Tool choice forced:', shouldGetMessages);
     const assistantMessage = initialResponse.choices[0].message;
     console.log('Assistant message:', JSON.stringify(assistantMessage, null, 2));
 
