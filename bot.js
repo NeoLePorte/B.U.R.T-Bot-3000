@@ -1387,31 +1387,18 @@ async function handleAskCommand(message, question) {
   try {
     console.log('\n=== Starting Ask Command ===');
     console.log('Question:', question);
+    console.log('Channel ID:', message.channel.id);
+    console.log('Author:', message.author.tag);
 
-    // Keywords that should trigger getRecentMessages
-    const serverKeywords = [
-      'server', 'channel', 'chat', 'messages',
-      'going on', 'happening', 'whats up', "what's up",
-      'recent', 'latest', 'activity'
-    ];
-
-    // Keywords that should trigger searchTweets
-    const twitterKeywords = [
-      'twitter', 'tweet', 'tweets', '#fishtanklive',
-      'social media'
-    ];
-
-    // Determine if we need to use tools
+    // Keywords check logging
+    const serverKeywords = ['server', 'channel', 'chat', 'messages', 'going on', 'happening'];
     const needsServerInfo = serverKeywords.some(keyword => 
-      question.toLowerCase().includes(keyword)
-    );
-    const needsTwitterInfo = twitterKeywords.some(keyword => 
       question.toLowerCase().includes(keyword)
     );
 
     console.log('Analysis:', {
       needsServerInfo,
-      needsTwitterInfo,
+      keywords: serverKeywords.filter(k => question.toLowerCase().includes(k)),
       question
     });
 
@@ -1420,7 +1407,10 @@ async function handleAskCommand(message, question) {
       { role: "user", content: question }
     ];
 
-    // Only use tools if specifically needed
+    console.log('=== Sending Initial Request ===');
+    console.log('Conversation state:', JSON.stringify(conversation, null, 2));
+    console.log('Tool choice:', needsServerInfo ? 'getRecentMessages' : 'auto');
+
     const initialResponse = await openai.chat.completions.create({
       model: "grok-beta",
       messages: conversation,
@@ -1428,48 +1418,77 @@ async function handleAskCommand(message, question) {
       tool_choice: needsServerInfo ? {
         type: "function",
         function: { name: "getRecentMessages" }
-      } : "auto"  // Let the model decide for other cases
+      } : "auto"
     });
 
-    console.log('=== Initial Response Received ===');
+    console.log('\n=== Initial Response Received ===');
+    console.log('Response status:', initialResponse.choices[0].finish_reason);
     const assistantMessage = initialResponse.choices[0].message;
+    console.log('Assistant message:', JSON.stringify(assistantMessage, null, 2));
+
     conversation.push(assistantMessage);
 
-    // Only process tool calls if they exist
     if (assistantMessage.tool_calls) {
       console.log('\n=== Processing Tool Calls ===');
       console.log('Number of tool calls:', assistantMessage.tool_calls.length);
 
       for (const toolCall of assistantMessage.tool_calls) {
-        console.log(`\nExecuting tool call ${toolCall.id}:`, toolCall.function.name);
+        console.log(`\n--- Tool Call ${toolCall.id} ---`);
+        console.log('Tool:', toolCall.function.name);
+        console.log('Arguments:', toolCall.function.arguments);
         
+        console.log('Executing tool...');
         const result = await executeToolCall(toolCall, message);
-        console.log('Tool execution completed');
+        console.log('Tool result received:', {
+          success: !result.error,
+          messageCount: Array.isArray(result) ? result.length : 'N/A',
+          error: result.error
+        });
 
         conversation.push({
           role: "tool",
           content: JSON.stringify(result),
           tool_call_id: toolCall.id
         });
+        console.log('Tool result added to conversation');
       }
 
-      // Get final response with tool results
+      console.log('\n=== Getting Final Response ===');
+      console.log('Final conversation state:', JSON.stringify(conversation, null, 2));
+      
+      console.log('Sending final request to OpenAI...');
       const finalResponse = await openai.chat.completions.create({
         model: "grok-beta",
         messages: conversation,
         temperature: 0.7,
         max_tokens: 1000
       });
+      
+      console.log('Final response received');
+      console.log('Response status:', finalResponse.choices[0].finish_reason);
+      const finalMessage = finalResponse.choices[0].message.content;
+      console.log('Response content:', finalMessage);
 
-      return sanitizeResponse(finalResponse.choices[0].message.content);
+      return sanitizeResponse(finalMessage);
     }
 
+    console.log('\n=== No Tool Calls Required ===');
     return sanitizeResponse(assistantMessage.content);
 
   } catch (error) {
-    console.error('Error in handleAskCommand:', error);
+    console.error('\n=== Error in handleAskCommand ===');
+    console.error('Error type:', error.constructor.name);
+    console.error('Error message:', error.message);
     console.error('Stack trace:', error.stack);
+    if (error.response) {
+      console.error('API Response:', {
+        status: error.response.status,
+        data: error.response.data
+      });
+    }
     throw error;
+  } finally {
+    console.log('\n=== Ask Command Completed ===');
   }
 }
 
