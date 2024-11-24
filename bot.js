@@ -1416,8 +1416,8 @@ async function handleAskCommand(message, question) {
     console.log('=== Starting Ask Command ===');
     console.log('Question:', question);
 
-    // Initial conversation array
-    const conversation = [
+    // Initialize conversation array
+    let conversation = [
       { role: "system", content: BURT_PROMPT },
       { role: "user", content: question }
     ];
