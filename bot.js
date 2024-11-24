@@ -1387,48 +1387,74 @@ async function handleAskCommand(message, question) {
   try {
     console.log('\n=== Starting Ask Command ===');
     console.log('Question:', question);
+    console.log('Channel:', message.channel.id);
 
-    const needsServerInfo = question.toLowerCase().includes('server') || 
-                           question.toLowerCase().includes('chat') ||
-                           question.toLowerCase().includes('going on');
+    const serverKeywords = ['server', 'chat', 'going on', 'happening'];
+    const needsServerInfo = serverKeywords.some(k => question.toLowerCase().includes(k));
     
-    console.log('Analysis:', { needsServerInfo, question });
+    console.log('Analysis:', { needsServerInfo, matchedKeywords: serverKeywords.filter(k => question.toLowerCase().includes(k)) });
 
+    // Initial conversation with clear system prompt
     let conversation = [
-      { role: "system", content: BURT_PROMPT },
+      { 
+        role: "system", 
+        content: "You are BURT, a helpful Discord bot. When users ask about server activity, analyze the messages provided and give a clear summary."
+      },
       { role: "user", content: question }
     ];
 
+    // Make initial request to Grok API
+    console.log('=== Making Initial Request to Grok ===');
     const initialResponse = await openai.chat.completions.create({
       model: "grok-beta",
       messages: conversation,
-      tools: tools,
-      tool_choice: needsServerInfo ? {
-        type: "function",
-        function: { name: "getRecentMessages" }
-      } : "auto"
+      tools: needsServerInfo ? [
+        {
+          type: "function",
+          function: {
+            name: "getRecentMessages",
+            description: "Get recent messages from the Discord channel",
+            parameters: {
+              type: "object",
+              properties: {
+                limit: {
+                  type: "number",
+                  description: "Number of messages to retrieve"
+                }
+              }
+            }
+          }
+        }
+      ] : [],
+      tool_choice: needsServerInfo ? { type: "function", function: { name: "getRecentMessages" } } : "none"
     });
 
-    console.log('\n=== Initial Response Received ===');
+    console.log('=== Initial Response Received ===');
+    console.log('Response type:', typeof initialResponse);
+    console.log('Has choices:', !!initialResponse.choices);
+    
     const assistantMessage = initialResponse.choices[0].message;
-    console.log('Assistant message type:', typeof assistantMessage);
-    console.log('Tool calls:', assistantMessage.tool_calls ? 'yes' : 'no');
+    console.log('Assistant message:', {
+      content: assistantMessage.content?.substring(0, 100),
+      hasToolCalls: !!assistantMessage.tool_calls
+    });
 
-    if (assistantMessage.tool_calls) {
-      console.log('\n=== Processing Tool Calls ===');
+    // If tool calls are present, execute them
+    if (assistantMessage.tool_calls?.length) {
+      console.log('\n=== Executing Tool Calls ===');
       const toolResults = [];
 
       for (const toolCall of assistantMessage.tool_calls) {
-        console.log(`\nExecuting ${toolCall.function.name}...`);
+        console.log(`Executing ${toolCall.function.name}...`);
         const result = await executeToolCall(toolCall, message);
-        console.log('Tool execution completed with result length:', 
-          Array.isArray(result) ? result.length : 'N/A');
+        toolResults.push(result);
         
-        toolResults.push({
-          tool: toolCall.function.name,
-          result: result
+        // Add tool result to conversation
+        conversation.push({
+          role: "assistant",
+          content: null,
+          tool_calls: [toolCall]
         });
-
         conversation.push({
           role: "tool",
           content: JSON.stringify(result),
@@ -1436,47 +1462,37 @@ async function handleAskCommand(message, question) {
         });
       }
 
-      console.log('\n=== Preparing Final Response ===');
-      // Add a summary message to help Grok understand the context
+      // Add a final user message requesting summary
       conversation.push({
         role: "user",
-        content: `Based on the recent messages I retrieved, please summarize what's been happening in the server. Focus on the main conversations and topics being discussed.`
+        content: "Please analyze these messages and provide a clear summary of what's been happening in the server."
       });
 
-      console.log('Sending final request with conversation length:', conversation.length);
-      console.log('Conversation state:', JSON.stringify(conversation.map(msg => ({
-        role: msg.role,
-        hasContent: !!msg.content,
-        length: msg.content?.length || 0
-      })), null, 2));
-
+      console.log('\n=== Getting Final Response ===');
+      console.log('Conversation length:', conversation.length);
+      
+      // Get final response from Grok
       const finalResponse = await openai.chat.completions.create({
         model: "grok-beta",
         messages: conversation,
         temperature: 0.7,
-        max_tokens: 1000
+        max_tokens: 500
       });
 
-      console.log('\n=== Final Response Received ===');
-      const finalMessage = finalResponse.choices[0].message.content;
-      console.log('Response length:', finalMessage.length);
-
-      return sanitizeResponse(finalMessage);
+      console.log('Final response received');
+      return sanitizeResponse(finalResponse.choices[0].message.content);
     }
 
-    console.log('\n=== No Tool Calls Required ===');
+    // If no tool calls, return initial response
+    console.log('=== No Tool Calls, Returning Initial Response ===');
     return sanitizeResponse(assistantMessage.content);
 
   } catch (error) {
     console.error('\n=== Error in handleAskCommand ===');
     console.error('Error type:', error.constructor.name);
     console.error('Error message:', error.message);
-    if (error.response) {
-      console.error('API Error:', error.response.data);
-    }
+    console.error('Stack trace:', error.stack);
     throw error;
-  } finally {
-    console.log('\n=== Ask Command Completed ===');
   }
 }
 
