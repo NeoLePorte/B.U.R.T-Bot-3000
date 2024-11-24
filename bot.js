@@ -1410,7 +1410,7 @@ async function executeToolCall(toolCall, message) {
   }
 }
 
-// Main handler following the correct flow
+// Main handler for processing messages
 async function handleAskCommand(message, question) {
   try {
     console.log('=== Starting Ask Command ===');
@@ -1423,6 +1423,7 @@ async function handleAskCommand(message, question) {
     ];
 
     // 1. Initial request to see if tools are needed
+    console.log('=== Making Initial Request ===');
     const initialResponse = await openai.chat.completions.create({
       model: "grok-beta",
       messages: conversation,
@@ -1434,19 +1435,17 @@ async function handleAskCommand(message, question) {
     const assistantMessage = initialResponse.choices[0].message;
     console.log('Assistant message:', assistantMessage);
 
-    // 2. If tools are needed, execute them and add results to conversation
+    // Add assistant's response to conversation
+    conversation.push(assistantMessage);
+
+    // 2. If tools are needed, execute them
     if (assistantMessage.tool_calls) {
       console.log('=== Processing Tool Calls ===');
-      
-      // Add the assistant's message with tool calls
-      conversation.push(assistantMessage);
 
       // Execute each tool call
       for (const toolCall of assistantMessage.tool_calls) {
-        console.log(`Tool: ${toolCall.function.name}`);
-        console.log('Arguments:', toolCall.function.arguments);
-
-        // Execute tool and get result
+        console.log(`Executing tool: ${toolCall.function.name}`);
+        
         const result = await executeToolCall(toolCall, message);
         console.log('Tool result:', result);
 
@@ -1458,20 +1457,18 @@ async function handleAskCommand(message, question) {
         });
       }
 
-      // 3. Final request with tool results as context
+      // 3. Final request with tool results
       console.log('=== Getting Final Response ===');
       const finalResponse = await openai.chat.completions.create({
         model: "grok-beta",
         messages: conversation
       });
 
-      // Sanitize the response before returning
       return sanitizeResponse(finalResponse.choices[0].message.content);
-
     }
 
     // If no tools were needed, return the initial response
-    return assistantMessage.content;
+    return sanitizeResponse(assistantMessage.content);
 
   } catch (error) {
     console.error('Error in handleAskCommand:', error);
@@ -1506,27 +1503,6 @@ function sanitizeResponse(response) {
   }
 }
 
-// Then update the relevant part of your command handling
-async function handleAskCommand(message, question) {
-  try {
-    // ... existing code ...
-
-    // 3. Final request with tool results as context
-    console.log('=== Getting Final Response ===');
-    const finalResponse = await openai.chat.completions.create({
-      model: "grok-beta",
-      messages: conversation
-    });
-
-    // Sanitize the response before returning
-    return sanitizeResponse(finalResponse.choices[0].message.content);
-
-  } catch (error) {
-    console.error('Error in handleAskCommand:', error);
-    throw error;
-  }
-}
-
 // Message handling for BURT's channel
 client.on('messageCreate', async message => {
   try {
@@ -1545,27 +1521,22 @@ client.on('messageCreate', async message => {
       await message.channel.sendTyping();
 
       try {
-        // Get response from BURT
         const response = await handleAskCommand(message, message.content);
         
-        // Ensure we have a response
         if (!response) {
-          console.error('Empty response received from handleAskCommand');
+          console.error('Empty response received');
           await message.reply('Sorry, I encountered an error while processing your message.');
           return;
         }
 
-        // Sanitize and split response if needed
         const sanitizedResponse = sanitizeResponse(response);
         
         if (sanitizedResponse.length > 2000) {
-          // Split long messages into chunks
           const chunks = sanitizedResponse.match(/.{1,2000}/g) || [];
           console.log(`Splitting response into ${chunks.length} chunks`);
           
           for (const chunk of chunks) {
             await message.reply(chunk);
-            // Small delay between chunks to maintain order
             await new Promise(resolve => setTimeout(resolve, 500));
           }
         } else {
@@ -1574,8 +1545,7 @@ client.on('messageCreate', async message => {
 
       } catch (error) {
         console.error('Error processing channel message:', error);
-        // Send a user-friendly error message
-        await message.reply('Sorry, I encountered an error while processing your message. Please try again.');
+        await message.reply('Sorry, I encountered an error while processing your message.');
       }
     }
   } catch (error) {
