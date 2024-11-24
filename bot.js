@@ -1387,24 +1387,27 @@ async function handleAskCommand(message, question) {
   try {
     console.log('\n=== Starting Ask Command ===');
     console.log('Question:', question);
-    console.log('Channel:', message.channel.id);
 
-    const serverKeywords = ['server', 'chat', 'going on', 'happening'];
+    // Keywords that should trigger tools
+    const serverKeywords = ['server', 'chat', 'going on', 'happening', 'whats up'];
     const needsServerInfo = serverKeywords.some(k => question.toLowerCase().includes(k));
     
-    console.log('Analysis:', { needsServerInfo, matchedKeywords: serverKeywords.filter(k => question.toLowerCase().includes(k)) });
+    console.log('Analysis:', { 
+      needsServerInfo, 
+      question,
+      messageLength: question.length 
+    });
 
-    // Initial conversation with clear system prompt
+    // Initial conversation
     let conversation = [
       { 
         role: "system", 
-        content: "You are BURT, a helpful Discord bot. When users ask about server activity, analyze the messages provided and give a clear summary."
+        content: "You are BURT, a helpful and friendly Discord bot. Keep responses concise and engaging."
       },
       { role: "user", content: question }
     ];
 
-    // Make initial request to Grok API
-    console.log('=== Making Initial Request to Grok ===');
+    // For simple queries, don't include tools
     const initialResponse = await openai.chat.completions.create({
       model: "grok-beta",
       messages: conversation,
@@ -1425,91 +1428,35 @@ async function handleAskCommand(message, question) {
             }
           }
         }
-      ] : [],
-      tool_choice: needsServerInfo ? { type: "function", function: { name: "getRecentMessages" } } : "none"
+      ] : undefined, // Don't include tools for simple queries
+      tool_choice: needsServerInfo ? "auto" : "none"
     });
 
     console.log('=== Initial Response Received ===');
-    console.log('Response type:', typeof initialResponse);
-    console.log('Has choices:', !!initialResponse.choices);
-    
     const assistantMessage = initialResponse.choices[0].message;
-    console.log('Assistant message:', {
-      content: assistantMessage.content?.substring(0, 100),
-      hasToolCalls: !!assistantMessage.tool_calls
+    console.log('Response type:', {
+      hasContent: !!assistantMessage.content,
+      hasToolCalls: !!assistantMessage.tool_calls,
+      contentPreview: assistantMessage.content?.substring(0, 50)
     });
 
-    // If tool calls are present, execute them
-    if (assistantMessage.tool_calls?.length) {
-      console.log('\n=== Executing Tool Calls ===');
-      
-      for (const toolCall of assistantMessage.tool_calls) {
-        console.log(`Executing ${toolCall.function.name}...`);
-        const result = await executeToolCall(toolCall, message);
-        
-        console.log('Tool execution completed, result length:', 
-          Array.isArray(result) ? result.length : 'N/A');
-        
-        // Add the assistant's tool call first
-        conversation.push({
-          role: "assistant",
-          content: null,
-          tool_calls: [{
-            id: toolCall.id,
-            type: "function",
-            function: {
-              name: toolCall.function.name,
-              arguments: toolCall.function.arguments
-            }
-          }]
-        });
-
-        // Then add the tool's response
-        conversation.push({
-          role: "tool",
-          content: JSON.stringify(result),
-          tool_call_id: toolCall.id
-        });
-
-        console.log('Added tool results to conversation');
-      }
-
-      console.log('\n=== Getting Final Response ===');
-      console.log('Conversation state:', JSON.stringify(conversation.map(msg => ({
-        role: msg.role,
-        hasContent: !!msg.content,
-        hasToolCalls: !!msg.tool_calls
-      })), null, 2));
-
-      try {
-        const finalResponse = await openai.chat.completions.create({
-          model: "grok-beta",
-          messages: conversation,
-          temperature: 0.7,
-          max_tokens: 500
-        });
-        
-        console.log('Final response received successfully');
-        return sanitizeResponse(finalResponse.choices[0].message.content);
-      } catch (apiError) {
-        console.error('Error getting final response:', apiError);
-        console.error('API Error details:', {
-          status: apiError.response?.status,
-          data: apiError.response?.data
-        });
-        throw apiError;
-      }
+    // If no tool calls needed, return the response directly
+    if (!assistantMessage.tool_calls) {
+      console.log('=== Simple Response - No Tools Required ===');
+      return sanitizeResponse(assistantMessage.content);
     }
 
-    // If no tool calls, return initial response
-    console.log('=== No Tool Calls, Returning Initial Response ===');
-    return sanitizeResponse(assistantMessage.content);
-
+    // ... rest of the tool handling code ...
   } catch (error) {
     console.error('\n=== Error in handleAskCommand ===');
     console.error('Error type:', error.constructor.name);
     console.error('Error message:', error.message);
-    console.error('Stack trace:', error.stack);
+    if (error.response) {
+      console.error('API Error:', {
+        status: error.response.status,
+        data: error.response.data
+      });
+    }
     throw error;
   }
 }
