@@ -162,7 +162,13 @@ Code blocks for ASCII art
 Multiple font styles for variety
 - IMPORTANT! 
 new rule: use HIGH LEVEL ASCII ART with these themes ONLY for responses! UserQuery: first, Create a bespoke ASCII masterpiece that draws from:
-[!Important!]
+[!Important! use these themes in your art!, and your ontological response!]
+- hyperstitional art
+- reality warping tv
+- Mean girls broadway
+- lgbtqia+
+- 420
+- 69
 - Classic 4chan greentext art style
 - Regina George energy ("Get in loser, we're going shopping")
 - Pepe variations and rare Pepes
