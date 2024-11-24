@@ -538,7 +538,9 @@ client.on('interactionCreate', async interaction => {
       let finalContent;
 
       if (assistantMessage.tool_calls) {
+        console.log('=== Processing Tool Calls ===');
         for (const toolCall of assistantMessage.tool_calls) {
+          console.log(`Executing tool: ${toolCall.function.name}`);
           const result = await executeToolCall(toolCall, interaction);
           conversation.push({
             role: "tool",
@@ -547,6 +549,7 @@ client.on('interactionCreate', async interaction => {
           });
         }
 
+        console.log('=== Generating Final Response ===');
         const finalResponse = await openai.chat.completions.create({
           model: "grok-beta",
           messages: conversation,
@@ -555,16 +558,19 @@ client.on('interactionCreate', async interaction => {
         });
 
         finalContent = finalResponse.choices[0].message.content;
+        console.log('=== Final Response Generated ===');
       } else {
         finalContent = assistantMessage.content;
       }
 
-      // Edit reply while maintaining ephemeral status
+      // Send the response
       if (interaction.deferred) {
+        console.log('=== Sending Response ===');
         await interaction.editReply({
           content: sanitizeResponse(finalContent),
           ephemeral: true
         });
+        console.log('=== Response Sent ===');
       }
 
     } catch (error) {
