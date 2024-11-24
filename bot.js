@@ -1388,7 +1388,6 @@ async function handleAskCommand(message, question) {
     console.log('\n=== Starting Ask Command ===');
     console.log('Question:', question);
 
-    // Keywords that should trigger tools
     const serverKeywords = ['server', 'chat', 'going on', 'happening', 'whats up'];
     const needsServerInfo = serverKeywords.some(k => question.toLowerCase().includes(k));
     
@@ -1398,7 +1397,6 @@ async function handleAskCommand(message, question) {
       messageLength: question.length 
     });
 
-    // Initial conversation
     let conversation = [
       { 
         role: "system", 
@@ -1407,7 +1405,6 @@ async function handleAskCommand(message, question) {
       { role: "user", content: question }
     ];
 
-    // For simple queries, don't include tools
     const initialResponse = await openai.chat.completions.create({
       model: "grok-beta",
       messages: conversation,
@@ -1428,7 +1425,7 @@ async function handleAskCommand(message, question) {
             }
           }
         }
-      ] : undefined, // Don't include tools for simple queries
+      ] : undefined,
       tool_choice: needsServerInfo ? "auto" : "none"
     });
 
@@ -1446,7 +1443,36 @@ async function handleAskCommand(message, question) {
       return sanitizeResponse(assistantMessage.content);
     }
 
-    // ... rest of the tool handling code ...
+    // Process tool calls
+    console.log('\n=== Processing Tool Calls ===');
+    console.log('Number of tool calls:', assistantMessage.tool_calls.length);
+
+    for (const toolCall of assistantMessage.tool_calls) {
+      console.log(`\nExecuting tool call ${toolCall.id}:`, toolCall.function.name);
+      
+      const result = await executeToolCall(toolCall, message);
+      console.log('Tool execution completed with result size:', 
+        Array.isArray(result) ? result.length : 'N/A');
+
+      conversation.push({
+        role: "tool",
+        content: JSON.stringify(result),
+        tool_call_id: toolCall.id
+      });
+    }
+
+    // Get final response with tool results
+    console.log('\n=== Getting Final Response ===');
+    const finalResponse = await openai.chat.completions.create({
+      model: "grok-beta",
+      messages: conversation,
+      temperature: 0.7,
+      max_tokens: 1000
+    });
+
+    console.log('Final response received');
+    return sanitizeResponse(finalResponse.choices[0].message.content);
+
   } catch (error) {
     console.error('\n=== Error in handleAskCommand ===');
     console.error('Error type:', error.constructor.name);
