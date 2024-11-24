@@ -919,7 +919,7 @@ client.on('interactionCreate', async interaction => {
         return embed;
       });
 
-      // Create navigation buttons
+      // Updated navigation row with close button
       const row = new ActionRowBuilder()
         .addComponents(
           new ButtonBuilder()
@@ -929,7 +929,11 @@ client.on('interactionCreate', async interaction => {
           new ButtonBuilder()
             .setCustomId('next')
             .setLabel('Next')
-            .setStyle(ButtonStyle.Primary)
+            .setStyle(ButtonStyle.Primary),
+          new ButtonBuilder()
+            .setCustomId('close')
+            .setLabel('Close Gallery')
+            .setStyle(ButtonStyle.Danger)
         );
 
       let currentPage = 0;
@@ -937,41 +941,62 @@ client.on('interactionCreate', async interaction => {
       // Send initial message
       const response = await interaction.editReply({
         embeds: [pages[currentPage]],
-        components: pages.length > 1 ? [row] : [],
+        components: pages.length > 1 ? [row] : [new ActionRowBuilder()
+          .addComponents(
+            new ButtonBuilder()
+              .setCustomId('close')
+              .setLabel('Close Gallery')
+              .setStyle(ButtonStyle.Danger)
+          )],
         ephemeral: true
       });
 
-      // Create button collector
-      if (pages.length > 1) {
-        const collector = response.createMessageComponentCollector({ 
-          time: 300000 // 5 minutes
-        });
+      // Updated collector
+      const collector = response.createMessageComponentCollector({ 
+        time: 300000 // 5 minutes
+      });
 
-        collector.on('collect', async i => {
-          if (i.user.id !== interaction.user.id) {
-            await i.reply({ 
-              content: 'These buttons aren\'t for you!', 
-              ephemeral: true 
-            });
-            return;
-          }
-
-          if (i.customId === 'prev') {
-            currentPage = currentPage > 0 ? --currentPage : pages.length - 1;
-          } else if (i.customId === 'next') {
-            currentPage = currentPage + 1 < pages.length ? ++currentPage : 0;
-          }
-
-          await i.update({
-            embeds: [pages[currentPage]],
-            components: [row]
+      collector.on('collect', async i => {
+        if (i.user.id !== interaction.user.id) {
+          await i.reply({ 
+            content: 'These buttons aren\'t for you!', 
+            ephemeral: true 
           });
-        });
+          return;
+        }
 
-        collector.on('end', () => {
-          interaction.editReply({ components: [] }).catch(console.error);
+        if (i.customId === 'close') {
+          await i.update({ 
+            content: 'Gallery closed!', 
+            embeds: [], 
+            components: [] 
+          });
+          collector.stop();
+          return;
+        }
+
+        if (i.customId === 'prev') {
+          currentPage = currentPage > 0 ? --currentPage : pages.length - 1;
+        } else if (i.customId === 'next') {
+          currentPage = currentPage + 1 < pages.length ? ++currentPage : 0;
+        }
+
+        await i.update({
+          embeds: [pages[currentPage]],
+          components: [row]
         });
-      }
+      });
+
+      collector.on('end', () => {
+        // Only try to remove components if the interaction hasn't been closed already
+        interaction.fetchReply()
+          .then(reply => {
+            if (reply.components.length > 0) {
+              interaction.editReply({ components: [] }).catch(console.error);
+            }
+          })
+          .catch(console.error);
+      });
 
     } catch (error) {
       console.error('Error in images command:', error);
