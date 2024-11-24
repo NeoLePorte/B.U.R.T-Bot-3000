@@ -82,7 +82,7 @@ const commands = [
       {
         name: 'amount',
         description: 'Number of images to show (default: 100, max: 100)',
-        type: 4,
+        type: 4, // INTEGER type
         required: false
       }
     ]
@@ -1031,4 +1031,127 @@ client.on('debug', info => {
 // Add warning event handler
 client.on('warn', warning => {
   console.warn('Discord warning:', warning);
+});
+
+client.on('interactionCreate', async interaction => {
+  if (!interaction.isChatInputCommand()) return;
+
+  if (interaction.commandName === 'images') {
+    try {
+      await interaction.deferReply({ ephemeral: true });
+      
+      // Get the amount option, default to 10 if not specified
+      const amount = Math.min(interaction.options.getInteger('amount') || 10, 100);
+      
+      // Fetch messages from the channel
+      const messages = await interaction.channel.messages.fetch({ limit: 100 });
+      
+      // Filter for messages with attachments or embeds with images
+      const imageMessages = messages.filter(msg => {
+        const hasAttachments = msg.attachments.some(att => 
+          att.contentType?.startsWith('image/'));
+        const hasImageEmbeds = msg.embeds.some(embed => 
+          embed.type === 'image' || 
+          (embed.image && embed.image.url) ||
+          (embed.thumbnail && embed.thumbnail.url));
+        return hasAttachments || hasImageEmbeds;
+      }).first(amount);
+
+      if (imageMessages.length === 0) {
+        await interaction.editReply('No recent images found in this channel!');
+        return;
+      }
+
+      // Create embed pages for images
+      const pages = imageMessages.map((msg, index) => {
+        const embed = new EmbedBuilder()
+          .setColor('#0099ff')
+          .setFooter({ text: `Image ${index + 1}/${imageMessages.length}` })
+          .setTimestamp(msg.createdAt);
+
+        // Get the image URL
+        let imageUrl;
+        if (msg.attachments.size > 0) {
+          imageUrl = msg.attachments.first().url;
+        } else {
+          const embed = msg.embeds[0];
+          imageUrl = embed.image?.url || embed.thumbnail?.url;
+        }
+
+        embed.setImage(imageUrl);
+        
+        // Add message link and author
+        embed.setAuthor({ 
+          name: msg.author.tag, 
+          iconURL: msg.author.displayAvatarURL() 
+        });
+        embed.setDescription(`[Jump to message](${msg.url})`);
+
+        return embed;
+      });
+
+      // Create navigation buttons
+      const row = new ActionRowBuilder()
+        .addComponents(
+          new ButtonBuilder()
+            .setCustomId('prev')
+            .setLabel('Previous')
+            .setStyle(ButtonStyle.Primary),
+          new ButtonBuilder()
+            .setCustomId('next')
+            .setLabel('Next')
+            .setStyle(ButtonStyle.Primary)
+        );
+
+      let currentPage = 0;
+
+      // Send initial message
+      const response = await interaction.editReply({
+        embeds: [pages[currentPage]],
+        components: pages.length > 1 ? [row] : [],
+        ephemeral: true
+      });
+
+      // Create button collector
+      if (pages.length > 1) {
+        const collector = response.createMessageComponentCollector({ 
+          time: 300000 // 5 minutes
+        });
+
+        collector.on('collect', async i => {
+          if (i.user.id !== interaction.user.id) {
+            await i.reply({ 
+              content: 'These buttons aren\'t for you!', 
+              ephemeral: true 
+            });
+            return;
+          }
+
+          if (i.customId === 'prev') {
+            currentPage = currentPage > 0 ? --currentPage : pages.length - 1;
+          } else if (i.customId === 'next') {
+            currentPage = currentPage + 1 < pages.length ? ++currentPage : 0;
+          }
+
+          await i.update({
+            embeds: [pages[currentPage]],
+            components: [row]
+          });
+        });
+
+        collector.on('end', () => {
+          interaction.editReply({ components: [] }).catch(console.error);
+        });
+      }
+
+    } catch (error) {
+      console.error('Error in images command:', error);
+      const errorMessage = 'An error occurred while fetching images!';
+      if (interaction.deferred) {
+        await interaction.editReply(errorMessage);
+      } else {
+        await interaction.reply({ content: errorMessage, ephemeral: true });
+      }
+    }
+  }
 });
