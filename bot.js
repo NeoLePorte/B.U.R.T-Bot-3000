@@ -1527,38 +1527,75 @@ async function handleAskCommand(message, question) {
   }
 }
 
-// Also update any direct message replies to use sanitizeResponse
+// Message handling for BURT's channel
 client.on('messageCreate', async message => {
   try {
+    // Ignore bot messages
     if (message.author.bot) return;
 
+    // Check if it's BURT's dedicated channel
     if (message.channel.id === '1307958013151150131') {
       console.log('Message in BURT\'s channel:', {
         content: message.content,
-        author: message.author.tag
+        author: message.author.tag,
+        channelId: message.channel.id
       });
-      
+
+      // Show typing indicator while processing
       await message.channel.sendTyping();
 
       try {
+        // Get response from BURT
         const response = await handleAskCommand(message, message.content);
+        
+        // Ensure we have a response
+        if (!response) {
+          console.error('Empty response received from handleAskCommand');
+          await message.reply('Sorry, I encountered an error while processing your message.');
+          return;
+        }
+
+        // Sanitize and split response if needed
         const sanitizedResponse = sanitizeResponse(response);
         
-        // Split long messages if needed
         if (sanitizedResponse.length > 2000) {
+          // Split long messages into chunks
           const chunks = sanitizedResponse.match(/.{1,2000}/g) || [];
+          console.log(`Splitting response into ${chunks.length} chunks`);
+          
           for (const chunk of chunks) {
             await message.reply(chunk);
+            // Small delay between chunks to maintain order
+            await new Promise(resolve => setTimeout(resolve, 500));
           }
         } else {
           await message.reply(sanitizedResponse);
         }
+
       } catch (error) {
         console.error('Error processing channel message:', error);
-        await message.reply('Sorry, I encountered an error while processing your message.');
+        // Send a user-friendly error message
+        await message.reply('Sorry, I encountered an error while processing your message. Please try again.');
       }
     }
   } catch (error) {
     console.error('Error in messageCreate handler:', error);
   }
+});
+
+// Add error event handler for the client
+client.on('error', error => {
+  console.error('Discord client error:', error);
+});
+
+// Add debug logging if needed
+client.on('debug', info => {
+  if (process.env.DEBUG) {
+    console.log('Discord debug:', info);
+  }
+});
+
+// Add warning event handler
+client.on('warn', warning => {
+  console.warn('Discord warning:', warning);
 });
