@@ -11,13 +11,13 @@ const openai = new OpenAI({
   baseURL: "https://api.x.ai/v1",
 });
 
-// Define tools properly as per docs
+// Define tools with proper schema
 const tools = [
   {
     type: "function",
     function: {
       name: "getRecentMessages",
-      description: "Get recent messages from the current channel to understand context and conversations",
+      description: "Get recent messages from the current Discord channel",
       parameters: {
         type: "object",
         properties: {
@@ -25,7 +25,8 @@ const tools = [
             type: "number",
             description: "Number of messages to retrieve (default: 50, max: 100)"
           }
-        }
+        },
+        required: []
       }
     }
   },
@@ -46,28 +47,8 @@ const tools = [
             enum: ["recency", "relevancy"],
             description: "Sort order for tweets"
           }
-        }
-      }
-    }
-  },
-  {
-    type: "function",
-    function: {
-      name: "webSearch",
-      description: "Search the web for information using DuckDuckGo",
-      parameters: {
-        type: "object",
-        properties: {
-          query: {
-            type: "string",
-            description: "Search query"
-          },
-          limit: {
-            type: "number",
-            description: "Number of results (default: 5)"
-          }
         },
-        required: ["query"]
+        required: []
       }
     }
   }
@@ -1437,25 +1418,37 @@ async function executeToolCall(toolCall, message) {
   }
 }
 
-// Update handleAskCommand to include better logging
+// Update handleAskCommand to force tool usage when appropriate
 async function handleAskCommand(message, question) {
   try {
     console.log('\n=== Starting Ask Command ===');
     console.log('Question:', question);
     console.log('Channel ID:', message.channel.id);
-    console.log('Author:', message.author.tag);
 
+    // Initialize conversation
     let conversation = [
       { role: "system", content: BURT_PROMPT },
-      { role: "user", content: question }
+      { 
+        role: "user", 
+        content: `[Command: ${question}]\nNote: When asked about server activity or messages, always use getRecentMessages tool first.`
+      }
     ];
 
-    console.log('=== Making Initial Request ===');
+    // Initial request with forced tool choice for certain queries
+    const shouldForceTools = question.toLowerCase().includes('server') || 
+                           question.toLowerCase().includes('messages') ||
+                           question.toLowerCase().includes('going on');
+
+    console.log('Should force tools:', shouldForceTools);
+
     const initialResponse = await openai.chat.completions.create({
       model: "grok-beta",
       messages: conversation,
       tools: tools,
-      tool_choice: "auto"
+      tool_choice: shouldForceTools ? {
+        type: "function",
+        function: { name: "getRecentMessages" }
+      } : "auto"
     });
 
     console.log('=== Initial Response Received ===');
@@ -1481,27 +1474,21 @@ async function handleAskCommand(message, question) {
         });
       }
 
+      // Get final response with tool results
       console.log('\n=== Getting Final Response ===');
-      console.log('Conversation state:', JSON.stringify(conversation, null, 2));
-      
       const finalResponse = await openai.chat.completions.create({
         model: "grok-beta",
         messages: conversation
       });
 
-      console.log('Final response received');
       return sanitizeResponse(finalResponse.choices[0].message.content);
     }
 
-    console.log('No tool calls needed, returning initial response');
     return sanitizeResponse(assistantMessage.content);
 
   } catch (error) {
     console.error('Error in handleAskCommand:', error);
-    console.error('Stack trace:', error.stack);
     throw error;
-  } finally {
-    console.log('=== Ask Command Completed ===\n');
   }
 }
 
