@@ -1387,29 +1387,17 @@ async function handleAskCommand(message, question) {
   try {
     console.log('\n=== Starting Ask Command ===');
     console.log('Question:', question);
-    console.log('Channel ID:', message.channel.id);
-    console.log('Author:', message.author.tag);
 
-    // Keywords check logging
-    const serverKeywords = ['server', 'channel', 'chat', 'messages', 'going on', 'happening'];
-    const needsServerInfo = serverKeywords.some(keyword => 
-      question.toLowerCase().includes(keyword)
-    );
-
-    console.log('Analysis:', {
-      needsServerInfo,
-      keywords: serverKeywords.filter(k => question.toLowerCase().includes(k)),
-      question
-    });
+    const needsServerInfo = question.toLowerCase().includes('server') || 
+                           question.toLowerCase().includes('chat') ||
+                           question.toLowerCase().includes('going on');
+    
+    console.log('Analysis:', { needsServerInfo, question });
 
     let conversation = [
       { role: "system", content: BURT_PROMPT },
       { role: "user", content: question }
     ];
-
-    console.log('=== Sending Initial Request ===');
-    console.log('Conversation state:', JSON.stringify(conversation, null, 2));
-    console.log('Tool choice:', needsServerInfo ? 'getRecentMessages' : 'auto');
 
     const initialResponse = await openai.chat.completions.create({
       model: "grok-beta",
@@ -1422,27 +1410,23 @@ async function handleAskCommand(message, question) {
     });
 
     console.log('\n=== Initial Response Received ===');
-    console.log('Response status:', initialResponse.choices[0].finish_reason);
     const assistantMessage = initialResponse.choices[0].message;
-    console.log('Assistant message:', JSON.stringify(assistantMessage, null, 2));
-
-    conversation.push(assistantMessage);
+    console.log('Assistant message type:', typeof assistantMessage);
+    console.log('Tool calls:', assistantMessage.tool_calls ? 'yes' : 'no');
 
     if (assistantMessage.tool_calls) {
       console.log('\n=== Processing Tool Calls ===');
-      console.log('Number of tool calls:', assistantMessage.tool_calls.length);
+      const toolResults = [];
 
       for (const toolCall of assistantMessage.tool_calls) {
-        console.log(`\n--- Tool Call ${toolCall.id} ---`);
-        console.log('Tool:', toolCall.function.name);
-        console.log('Arguments:', toolCall.function.arguments);
-        
-        console.log('Executing tool...');
+        console.log(`\nExecuting ${toolCall.function.name}...`);
         const result = await executeToolCall(toolCall, message);
-        console.log('Tool result received:', {
-          success: !result.error,
-          messageCount: Array.isArray(result) ? result.length : 'N/A',
-          error: result.error
+        console.log('Tool execution completed with result length:', 
+          Array.isArray(result) ? result.length : 'N/A');
+        
+        toolResults.push({
+          tool: toolCall.function.name,
+          result: result
         });
 
         conversation.push({
@@ -1450,24 +1434,32 @@ async function handleAskCommand(message, question) {
           content: JSON.stringify(result),
           tool_call_id: toolCall.id
         });
-        console.log('Tool result added to conversation');
       }
 
-      console.log('\n=== Getting Final Response ===');
-      console.log('Final conversation state:', JSON.stringify(conversation, null, 2));
-      
-      console.log('Sending final request to OpenAI...');
+      console.log('\n=== Preparing Final Response ===');
+      // Add a summary message to help Grok understand the context
+      conversation.push({
+        role: "user",
+        content: `Based on the recent messages I retrieved, please summarize what's been happening in the server. Focus on the main conversations and topics being discussed.`
+      });
+
+      console.log('Sending final request with conversation length:', conversation.length);
+      console.log('Conversation state:', JSON.stringify(conversation.map(msg => ({
+        role: msg.role,
+        hasContent: !!msg.content,
+        length: msg.content?.length || 0
+      })), null, 2));
+
       const finalResponse = await openai.chat.completions.create({
         model: "grok-beta",
         messages: conversation,
         temperature: 0.7,
         max_tokens: 1000
       });
-      
-      console.log('Final response received');
-      console.log('Response status:', finalResponse.choices[0].finish_reason);
+
+      console.log('\n=== Final Response Received ===');
       const finalMessage = finalResponse.choices[0].message.content;
-      console.log('Response content:', finalMessage);
+      console.log('Response length:', finalMessage.length);
 
       return sanitizeResponse(finalMessage);
     }
@@ -1479,12 +1471,8 @@ async function handleAskCommand(message, question) {
     console.error('\n=== Error in handleAskCommand ===');
     console.error('Error type:', error.constructor.name);
     console.error('Error message:', error.message);
-    console.error('Stack trace:', error.stack);
     if (error.response) {
-      console.error('API Response:', {
-        status: error.response.status,
-        data: error.response.data
-      });
+      console.error('API Error:', error.response.data);
     }
     throw error;
   } finally {
