@@ -484,7 +484,61 @@ async function fetchRemainingImages(interaction, galleryData) {
   }
 }
 
-// Update the interaction handler
+// Add this function near the top with other utility functions
+async function handleBurtInteraction(content, interaction = null, message = null) {
+  try {
+    // Process the question
+    let conversation = [
+      { role: "system", content: BURT_PROMPT },
+      { role: "user", content: content }
+    ];
+
+    const initialResponse = await openai.chat.completions.create({
+      model: "grok-beta",
+      messages: conversation,
+      tools: tools,
+      tool_choice: "auto"
+    });
+
+    const assistantMessage = initialResponse.choices[0].message;
+    conversation.push(assistantMessage);
+
+    let finalContent;
+
+    if (assistantMessage.tool_calls) {
+      console.log('=== Processing Tool Calls ===');
+      for (const toolCall of assistantMessage.tool_calls) {
+        console.log(`Executing tool: ${toolCall.function.name}`);
+        const result = await executeToolCall(toolCall, interaction || message);
+        conversation.push({
+          role: "tool",
+          content: JSON.stringify(result),
+          tool_call_id: toolCall.id
+        });
+      }
+
+      console.log('=== Generating Final Response ===');
+      const finalResponse = await openai.chat.completions.create({
+        model: "grok-beta",
+        messages: conversation,
+        temperature: 0.7,
+        max_tokens: 1000
+      });
+
+      finalContent = finalResponse.choices[0].message.content;
+      console.log('=== Final Response Generated ===');
+    } else {
+      finalContent = assistantMessage.content;
+    }
+
+    return sanitizeResponse(finalContent);
+  } catch (error) {
+    console.error('Error in handleBurtInteraction:', error);
+    throw error;
+  }
+}
+
+// Update the slash command handler
 client.on('interactionCreate', async interaction => {
   if (!interaction.isChatInputCommand()) return;
 
@@ -519,58 +573,13 @@ client.on('interactionCreate', async interaction => {
         await interaction.deferReply({ ephemeral: true });
       }
 
-      // Process the question
-      let conversation = [
-        { role: "system", content: BURT_PROMPT },
-        { role: "user", content: question }
-      ];
-
-      const initialResponse = await openai.chat.completions.create({
-        model: "grok-beta",
-        messages: conversation,
-        tools: tools,
-        tool_choice: "auto"
-      });
-
-      const assistantMessage = initialResponse.choices[0].message;
-      conversation.push(assistantMessage);
-
-      let finalContent;
-
-      if (assistantMessage.tool_calls) {
-        console.log('=== Processing Tool Calls ===');
-        for (const toolCall of assistantMessage.tool_calls) {
-          console.log(`Executing tool: ${toolCall.function.name}`);
-          const result = await executeToolCall(toolCall, interaction);
-          conversation.push({
-            role: "tool",
-            content: JSON.stringify(result),
-            tool_call_id: toolCall.id
-          });
-        }
-
-        console.log('=== Generating Final Response ===');
-        const finalResponse = await openai.chat.completions.create({
-          model: "grok-beta",
-          messages: conversation,
-          temperature: 0.7,
-          max_tokens: 1000
-        });
-
-        finalContent = finalResponse.choices[0].message.content;
-        console.log('=== Final Response Generated ===');
-      } else {
-        finalContent = assistantMessage.content;
-      }
-
-      // Send the response
+      const response = await handleBurtInteraction(question, interaction);
+      
       if (interaction.deferred) {
-        console.log('=== Sending Response ===');
         await interaction.editReply({
-          content: sanitizeResponse(finalContent),
+          content: response,
           ephemeral: true
         });
-        console.log('=== Response Sent ===');
       }
 
     } catch (error) {
@@ -933,49 +942,34 @@ function sanitizeResponse(response) {
   }
 }
 
-// Message handling for BURT's channel
+// Update the message handler
 client.on('messageCreate', async message => {
   try {
-    // Ignore bot messages
     if (message.author.bot) return;
 
-    // Check if it's BURT's dedicated channel
-    if (message.channel.id === '1307958013151150131') {
-      console.log('Message in BURT\'s channel:', {
+    // Check if it's BURT's channel or a mention
+    const isBurtChannel = message.channel.id === '1307958013151150131';
+    const isBurtMention = message.mentions.users.has(client.user.id);
+
+    if (isBurtChannel || isBurtMention) {
+      console.log('BURT interaction:', {
+        type: isBurtChannel ? 'channel' : 'mention',
         content: message.content,
         author: message.author.tag,
         channelId: message.channel.id
       });
 
-      // Show typing indicator while processing
-      await message.channel.sendTyping();
+      // Remove mention from content if it exists
+      let content = message.content
+        .replace(new RegExp(`<@!?${client.user.id}>`, 'gi'), '')
+        .replace(new RegExp(`<@${client.user.id}>`, 'gi'), '');
 
-      try {
-        const response = await handleAskCommand(message, message.content);
-        
-        if (!response) {
-          console.error('Empty response received');
-          await message.reply('Sorry, I encountered an error while processing your message.');
-          return;
-        }
-
-        const sanitizedResponse = sanitizeResponse(response);
-        
-        if (sanitizedResponse.length > 2000) {
-          const chunks = sanitizedResponse.match(/.{1,2000}/g) || [];
-          console.log(`Splitting response into ${chunks.length} chunks`);
-          
-          for (const chunk of chunks) {
-            await message.reply(chunk);
-            await new Promise(resolve => setTimeout(resolve, 500));
-          }
-        } else {
-          await message.reply(sanitizedResponse);
-        }
-
-      } catch (error) {
-        console.error('Error processing channel message:', error);
-        await message.reply('Sorry, I encountered an error while processing your message.');
+      const response = await handleBurtInteraction(content, null, message);
+      
+      if (isBurtChannel) {
+        await message.channel.send(response);
+      } else if (isBurtMention) {
+        await message.reply(response);
       }
     }
   } catch (error) {
