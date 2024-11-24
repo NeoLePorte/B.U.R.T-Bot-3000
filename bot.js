@@ -905,7 +905,7 @@ client.on('interactionCreate', async interaction => {
               console.log(`Arguments: ${toolCall.function.arguments}`);
               try {
                 const args = JSON.parse(toolCall.function.arguments);
-                const result = await executeToolCall(toolCall.function.name, args, interaction);
+                const result = await executeToolCall(toolCall, interaction);
                 toolResults.push({
                   tool_call_id: toolCall.id,
                   role: "tool",
@@ -1378,51 +1378,78 @@ async function duckDuckGoSearch(query, limit = 5) {
   }
 }
 
-// Proper tool execution functions
+// Tool execution function with better logging
 async function executeToolCall(toolCall, message) {
-  console.log(`Executing tool: ${toolCall.function.name}`);
-  const args = JSON.parse(toolCall.function.arguments);
+  console.log('\n=== Tool Execution Started ===');
+  console.log('Tool Name:', toolCall.function.name);
+  console.log('Tool Arguments:', toolCall.function.arguments);
   
   try {
+    const args = JSON.parse(toolCall.function.arguments);
+    
     switch (toolCall.function.name) {
       case 'getRecentMessages':
-        const messages = await message.channel.messages.fetch({ 
+        console.log('Fetching recent messages...');
+        console.log('Channel ID:', message.channel.id);
+        console.log('Requested limit:', args.limit);
+        
+        const fetchedMessages = await message.channel.messages.fetch({ 
           limit: Math.min(args.limit || 50, 100) 
         });
-        return Array.from(messages.values()).map(msg => ({
+        
+        console.log('Messages fetched:', fetchedMessages.size);
+        
+        const processedMessages = Array.from(fetchedMessages.values()).map(msg => ({
           content: msg.content,
-          author: msg.author.username,
-          timestamp: msg.createdTimestamp
+          author: msg.author?.username || 'Unknown User',
+          timestamp: msg.createdTimestamp,
+          id: msg.id
         }));
+        
+        console.log('Messages processed:', processedMessages.length);
+        return processedMessages;
 
       case 'searchTweets':
+        console.log('Searching tweets...');
+        console.log('Search parameters:', args);
         return await searchTweets(args);
 
       case 'webSearch':
+        console.log('Performing web search...');
+        console.log('Query:', args.query);
+        console.log('Limit:', args.limit);
         return await webSearch(args.query, args.limit);
 
       default:
+        console.error('Unknown tool called:', toolCall.function.name);
         throw new Error(`Unknown tool: ${toolCall.function.name}`);
     }
   } catch (error) {
     console.error(`Tool execution error (${toolCall.function.name}):`, error);
-    return { error: error.message };
+    console.error('Stack trace:', error.stack);
+    return { 
+      error: true, 
+      message: error.message,
+      details: error.stack
+    };
+  } finally {
+    console.log('=== Tool Execution Completed ===\n');
   }
 }
 
-// Main handler for processing messages
+// Update handleAskCommand to include better logging
 async function handleAskCommand(message, question) {
   try {
-    console.log('=== Starting Ask Command ===');
+    console.log('\n=== Starting Ask Command ===');
     console.log('Question:', question);
+    console.log('Channel ID:', message.channel.id);
+    console.log('Author:', message.author.tag);
 
-    // Initialize conversation array
     let conversation = [
       { role: "system", content: BURT_PROMPT },
       { role: "user", content: question }
     ];
 
-    // 1. Initial request to see if tools are needed
     console.log('=== Making Initial Request ===');
     const initialResponse = await openai.chat.completions.create({
       model: "grok-beta",
@@ -1431,25 +1458,22 @@ async function handleAskCommand(message, question) {
       tool_choice: "auto"
     });
 
-    console.log('=== Initial Response ===');
+    console.log('=== Initial Response Received ===');
     const assistantMessage = initialResponse.choices[0].message;
-    console.log('Assistant message:', assistantMessage);
+    console.log('Assistant message:', JSON.stringify(assistantMessage, null, 2));
 
-    // Add assistant's response to conversation
     conversation.push(assistantMessage);
 
-    // 2. If tools are needed, execute them
     if (assistantMessage.tool_calls) {
-      console.log('=== Processing Tool Calls ===');
+      console.log('\n=== Processing Tool Calls ===');
+      console.log('Number of tool calls:', assistantMessage.tool_calls.length);
 
-      // Execute each tool call
       for (const toolCall of assistantMessage.tool_calls) {
-        console.log(`Executing tool: ${toolCall.function.name}`);
+        console.log(`\nExecuting tool call ${toolCall.id}:`, toolCall.function.name);
         
         const result = await executeToolCall(toolCall, message);
-        console.log('Tool result:', result);
+        console.log('Tool result:', JSON.stringify(result, null, 2));
 
-        // Add tool result to conversation
         conversation.push({
           role: "tool",
           content: JSON.stringify(result),
@@ -1457,22 +1481,27 @@ async function handleAskCommand(message, question) {
         });
       }
 
-      // 3. Final request with tool results
-      console.log('=== Getting Final Response ===');
+      console.log('\n=== Getting Final Response ===');
+      console.log('Conversation state:', JSON.stringify(conversation, null, 2));
+      
       const finalResponse = await openai.chat.completions.create({
         model: "grok-beta",
         messages: conversation
       });
 
+      console.log('Final response received');
       return sanitizeResponse(finalResponse.choices[0].message.content);
     }
 
-    // If no tools were needed, return the initial response
+    console.log('No tool calls needed, returning initial response');
     return sanitizeResponse(assistantMessage.content);
 
   } catch (error) {
     console.error('Error in handleAskCommand:', error);
+    console.error('Stack trace:', error.stack);
     throw error;
+  } finally {
+    console.log('=== Ask Command Completed ===\n');
   }
 }
 
