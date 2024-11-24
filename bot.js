@@ -484,584 +484,94 @@ async function fetchRemainingImages(interaction, galleryData) {
   }
 }
 
-// Single consolidated interaction handler
+// Update the interaction handler
 client.on('interactionCreate', async interaction => {
-  // Handle Commands
-  if (interaction.isChatInputCommand()) {
-    console.log(`Command "${interaction.commandName}" used by ${interaction.user.tag}`);
-    const { commandName } = interaction;
+  if (!interaction.isChatInputCommand()) return;
 
-    switch (commandName) {
-      case 'images':
-        try {
-          await interaction.deferReply({ ephemeral: true });
-          console.time('imageFetch');
-          
-          const MAX_IMAGES = 100;
-          const FETCH_TIMEOUT = 15000; // 15 seconds
-          const imageRegex = /\.(jpg|jpeg|png|gif|webp)(?:\?.*)?$/i;
-          let images = [];
-          let lastId = null;
+  const command = interaction.commandName;
+  console.log(`Slash command received: ${command}`);
 
-          // Create a promise that resolves after timeout
-          const timeoutPromise = new Promise((resolve) => {
-            setTimeout(() => resolve('timeout'), FETCH_TIMEOUT);
-          });
-
-          // Image fetching function
-          const fetchImages = async () => {
-            while (images.length < MAX_IMAGES) {
-              const messages = await interaction.channel.messages.fetch({ 
-                limit: 100,
-                before: lastId 
-              });
-              
-              if (messages.size === 0) break;
-              lastId = messages.last().id;
-
-              // Process messages for images
-              for (const msg of messages.values()) {
-                if (msg.attachments.size === 0) continue;
-
-                for (const attachment of msg.attachments.values()) {
-                  const url = attachment.url.toLowerCase();
-                  if (attachment.contentType?.startsWith('image/') || imageRegex.test(url)) {
-                    images.push({
-                      url: attachment.url,
-                      author: msg.author.username,
-                      timestamp: msg.createdTimestamp,
-                      messageLink: msg.url
-                    });
-                    if (images.length >= MAX_IMAGES) return;
-                  }
-                }
-              }
-            }
-          };
-
-          // Race between fetch and timeout
-          await Promise.race([fetchImages(), timeoutPromise]);
-          console.timeEnd('imageFetch');
-          
-          if (images.length === 0) {
-            await interaction.editReply('No images found in the recent messages!');
-            return;
-          }
-
-          console.log(`Found ${images.length} images`);
-
-          // Create gallery data
-          const galleryData = {
-            images,
-            currentIndex: 0,
-            timeoutId: setTimeout(() => {
-              const gallery = activeGalleries.get(interaction.channelId);
-              if (gallery) {
-                activeGalleries.delete(interaction.channelId);
-                interaction.editReply({
-                  content: 'Gallery closed due to inactivity.',
-                  embeds: [],
-                  components: []
-                }).catch(console.error);
-              }
-            }, GALLERY_TIMEOUT)
-          };
-
-          // Create initial embed
-          const embed = new EmbedBuilder()
-            .setTitle(`Image Gallery (1/${images.length})`)
-            .setImage(images[0].url)
-            .setFooter({ 
-              text: `Posted by ${images[0].author} • Click title to view original message`
-            })
-            .setURL(images[0].messageLink)
-            .setTimestamp(images[0].timestamp);
-
-          // Create navigation row
-          const row = new ActionRowBuilder()
-            .addComponents(
-              new ButtonBuilder()
-                .setCustomId('prev')
-                .setLabel('Previous')
-                .setStyle(ButtonStyle.Primary)
-                .setDisabled(true),
-              new ButtonBuilder()
-                .setCustomId('next')
-                .setLabel('Next')
-                .setStyle(ButtonStyle.Primary)
-                .setDisabled(images.length === 1),
-              new ButtonBuilder()
-                .setCustomId('close')
-                .setLabel('Close Gallery')
-                .setStyle(ButtonStyle.Danger)
-            );
-
-          // Store gallery data and send response
-          activeGalleries.set(interaction.channelId, galleryData);
-          await interaction.editReply({
-            embeds: [embed],
-            components: [row]
-          });
-
-        } catch (error) {
-          console.error('Error creating image gallery:', error);
-          await interaction.editReply('An error occurred while creating the image gallery.')
-            .catch(() => console.error('Failed to send error message'));
-        }
-        break;
-
-      case 'tweets':
-        try {
-          await interaction.deferReply({ ephemeral: true });
-          console.time('initialTweetFetch');
-          
-          const MAX_TWEETS = 100;
-          const INITIAL_FETCH = 50;
-          const oneDayAgo = Date.now() - (24 * 60 * 60 * 1000);
-          let tweets = [];
-          let lastId = null;
-          let isLoading = true;
-
-          // Regular expressions
-          const tweetRegex = /https?:\/\/(?:www\.)?(twitter\.com|x\.com)\/\w+\/status\/\d+/gi;
-          const imageRegex = /https:\/\/pbs\.twimg\.com\/media\/[^\s]+/g;
-
-          // Process messages function
-          const processMessages = (messages) => {
-            console.log(`Processing ${messages.size} messages`);
-            const newTweets = [];
-            
-            for (const msg of messages.values()) {
-              // Stop if message is older than 24 hours
-              if (msg.createdTimestamp < oneDayAgo) {
-                console.log('Reached message older than 24 hours');
-                return { tweets: newTweets, reachedEnd: true };
-              }
-
-              const tweetMatches = Array.from(msg.content.matchAll(tweetRegex));
-              if (tweetMatches.length === 0) continue;
-
-              console.log(`Found ${tweetMatches.length} tweet matches`);
-
-              let tweetImage = null;
-              if (msg.embeds.length > 0) {
-                const imageEmbed = msg.embeds.find(embed => embed.image || embed.thumbnail);
-                if (imageEmbed?.image) {
-                  tweetImage = imageEmbed.image.url;
-                } else if (imageEmbed?.thumbnail) {
-                  tweetImage = imageEmbed.thumbnail.url;
-                }
-              }
-
-              for (const match of tweetMatches) {
-                const tweetUrl = match[0];
-                newTweets.push({
-                  url: tweetUrl,
-                  author: msg.author.username,
-                  timestamp: msg.createdTimestamp,
-                  messageLink: msg.url,
-                  content: msg.content,
-                  image: tweetImage
-                });
-              }
-            }
-            
-            return { tweets: newTweets, reachedEnd: false };
-          };
-
-          // Initial fetch
-          console.log('Starting initial fetch...');
-          const initialMessages = await interaction.channel.messages.fetch({ limit: INITIAL_FETCH });
-          console.log(`Fetched ${initialMessages.size} initial messages`);
-          
-          const initialResult = processMessages(initialMessages);
-          tweets = initialResult.tweets;
-          
-          if (initialMessages.size > 0) {
-            lastId = initialMessages.last().id;
-          }
-
-          console.log(`Initial tweets found: ${tweets.length}`);
-          console.timeEnd('initialTweetFetch');
-          
-          if (tweets.length === 0) {
-            await interaction.editReply('No X/Twitter links found in the recent messages! Searching further back...');
-            
-            // Immediate additional fetch if no tweets found initially
-            const additionalMessages = await interaction.channel.messages.fetch({ 
-              limit: 100,
-              before: lastId 
-            });
-            
-            if (additionalMessages.size > 0) {
-              const additionalResult = processMessages(additionalMessages);
-              tweets = additionalResult.tweets;
-              lastId = additionalMessages.last().id;
-            }
-            
-            if (tweets.length === 0) {
-              await interaction.editReply('No X/Twitter links found in the past 24 hours.');
-              return;
-            }
-          }
-
-          // Create gallery data and UI elements
-          const createEmbed = (tweet, index, total) => {
-            const embed = new EmbedBuilder()
-              .setTitle(`Tweet Links (${index + 1}/${total}${isLoading ? '+' : ''})`)
-              .setDescription(`[View Tweet](${tweet.url})\n\nContext: ${tweet.content.substring(0, 200)}${tweet.content.length > 200 ? '...' : ''}`)
-              .setFooter({ 
-                text: `Posted by ${tweet.author} • Click title to view original message${isLoading ? ' • Loading more...' : ''}`
-              })
-              .setURL(tweet.messageLink)
-              .setTimestamp(tweet.timestamp)
-              .setColor('#1DA1F2');
-
-            if (tweet.image) {
-              embed.setImage(tweet.image);
-            }
-
-            return embed;
-          };
-
-          const galleryData = {
-            tweets,
-            currentIndex: 0,
-            timeoutId: setTimeout(() => {
-              activeGalleries.delete(interaction.channelId);
-              interaction.editReply({
-                content: 'Gallery closed due to inactivity.',
-                embeds: [],
-                components: []
-              }).catch(console.error);
-            }, GALLERY_TIMEOUT)
-          };
-
-          const createRow = (currentIndex, totalTweets) => {
-            return new ActionRowBuilder()
-              .addComponents(
-                new ButtonBuilder()
-                  .setCustomId('prev')
-                  .setLabel('Previous')
-                  .setStyle(ButtonStyle.Primary)
-                  .setDisabled(currentIndex === 0),
-                new ButtonBuilder()
-                  .setCustomId('next')
-                  .setLabel('Next')
-                  .setStyle(ButtonStyle.Primary)
-                  .setDisabled(currentIndex === totalTweets - 1),
-                new ButtonBuilder()
-                  .setCustomId('close')
-                  .setLabel('Close Gallery')
-                  .setStyle(ButtonStyle.Danger)
-              );
-          };
-
-          // Send initial gallery
-          await interaction.editReply({
-            embeds: [createEmbed(tweets[0], 0, tweets.length)],
-            components: [createRow(0, tweets.length)]
-          });
-
-          activeGalleries.set(interaction.channelId, galleryData);
-
-          // Background loading
-          (async () => {
-            try {
-              let reachedEnd = false;
-              
-              while (!reachedEnd && tweets.length < MAX_TWEETS && lastId) {
-                const messages = await interaction.channel.messages.fetch({ 
-                  limit: 100,
-                  before: lastId 
-                });
-                
-                if (messages.size === 0) break;
-                
-                const result = processMessages(messages);
-                if (result.tweets.length > 0) {
-                  tweets.push(...result.tweets);
-                  if (tweets.length > MAX_TWEETS) {
-                    tweets = tweets.slice(0, MAX_TWEETS);
-                    break;
-                  }
-                  
-                  galleryData.tweets = tweets;
-                  
-                  // Update the current view if needed
-                  if (galleryData.currentIndex === 0) {
-                    await interaction.editReply({
-                      embeds: [createEmbed(tweets[0], 0, tweets.length)],
-                      components: [createRow(0, tweets.length)]
-                    });
-                  }
-                }
-                
-                if (result.reachedEnd) {
-                  reachedEnd = true;
-                  break;
-                }
-                
-                lastId = messages.last().id;
-              }
-              
-              isLoading = false;
-              console.log(`Final tweet count: ${tweets.length}`);
-              
-              // Final update
-              await interaction.editReply({
-                embeds: [createEmbed(tweets[galleryData.currentIndex], galleryData.currentIndex, tweets.length)],
-                components: [createRow(galleryData.currentIndex, tweets.length)]
-              });
-            } catch (error) {
-              console.error('Error in background loading:', error);
-            }
-          })();
-
-        } catch (error) {
-          console.error('Error creating tweet gallery:', error);
-          await interaction.editReply('An error occurred while creating the tweet gallery.')
-            .catch(() => console.error('Failed to send error message'));
-        }
-        break;
-
-      case 'ask':
-        const userId = interaction.user.id;
-        const cooldownEnd = userCooldowns.get(userId);
-        
-        if (cooldownEnd && Date.now() < cooldownEnd) {
-          const remainingTime = Math.ceil((cooldownEnd - Date.now()) / 1000);
+  if (command === 'ask') {
+    try {
+      // Check cooldown first
+      const userId = interaction.user.id;
+      const cooldownEnd = userCooldowns.get(userId);
+      
+      if (cooldownEnd && Date.now() < cooldownEnd) {
+        const remainingTime = Math.ceil((cooldownEnd - Date.now()) / 1000);
+        if (!interaction.replied && !interaction.deferred) {
           await interaction.reply({ 
-            content: `*[BURT twitches nervously]* The voices say we need to wait ${remainingTime} more seconds... They're very insistent about it!`, 
+            content: `*[BURT twitches nervously]* The voices say we need to wait ${remainingTime} more seconds...`, 
             ephemeral: true 
           });
-          return;
         }
-        
-        userCooldowns.set(userId, Date.now() + COOLDOWN_DURATION);
-        
-        try {
-          await interaction.deferReply({ ephemeral: true });
-          const question = interaction.options.getString('question');
-
-          console.log(`Processing question from ${interaction.user.username}: ${question}`);
-
-          // Keywords that should trigger getRecentMessages
-          const serverKeywords = [
-            'server', 'channel', 'chat', 'messages',
-            'going on', 'happening', 'whats up', "what's up",
-            'recent', 'latest', 'activity'
-          ];
-
-          // Keywords that should trigger searchTweets
-          const twitterKeywords = [
-            'twitter', 'tweet', 'tweets', '#fishtanklive',
-            'social media'
-          ];
-
-          // Determine if we need to use tools
-          const needsServerInfo = serverKeywords.some(keyword => 
-            question.toLowerCase().includes(keyword)
-          );
-          const needsTwitterInfo = twitterKeywords.some(keyword => 
-            question.toLowerCase().includes(keyword)
-          );
-
-          console.log('Analysis:', {
-            needsServerInfo,
-            needsTwitterInfo,
-            question
-          });
-
-          let conversation = [
-            { role: "system", content: BURT_PROMPT },
-            { role: "user", content: question }
-          ];
-
-          // Only use tools if specifically needed
-          const initialResponse = await openai.chat.completions.create({
-            model: "grok-beta",
-            messages: conversation,
-            tools: tools,
-            tool_choice: needsServerInfo ? {
-              type: "function",
-              function: { name: "getRecentMessages" }
-            } : "auto"  // Let the model decide for other cases
-          });
-
-          console.log('=== Initial Response Received ===');
-          const assistantMessage = initialResponse.choices[0].message;
-          conversation.push(assistantMessage);
-
-          // Only process tool calls if they exist
-          if (assistantMessage.tool_calls) {
-            console.log('\n=== Processing Tool Calls ===');
-            console.log('Number of tool calls:', assistantMessage.tool_calls.length);
-
-            for (const toolCall of assistantMessage.tool_calls) {
-              console.log(`\nExecuting tool call ${toolCall.id}:`, toolCall.function.name);
-              
-              const result = await executeToolCall(toolCall, interaction);
-              console.log('Tool execution completed');
-
-              conversation.push({
-                role: "tool",
-                content: JSON.stringify(result),
-                tool_call_id: toolCall.id
-              });
-            }
-
-            // Get final response with tool results
-            const finalResponse = await openai.chat.completions.create({
-              model: "grok-beta",
-              messages: conversation,
-              temperature: 0.7,
-              max_tokens: 1000
-            });
-
-            return sanitizeResponse(finalResponse.choices[0].message.content);
-          }
-
-          return sanitizeResponse(assistantMessage.content);
-
-        } catch (error) {
-          console.error('Error in ask command:', error);
-          await interaction.editReply({ 
-            content: '*[BURT stares intensely at a wall]*',
-            ephemeral: true
-          });
-        }
-        break;
-
-      case 'analyze':
-        const image = interaction.options.getAttachment('image');
-        const question = interaction.options.getString('question') || 'What do you see in this image?';
-
-        if (!image.contentType?.startsWith('image/')) {
-          await interaction.reply('Please provide a valid image file!');
-          return;
-        }
-
-        await interaction.deferReply();
-        
-        try {
-          const messages = [
-            { role: "system", content: BURT_PROMPT },
-            { 
-              role: "user", 
-              content: [
-                {
-                  type: "image_url",
-                  image_url: {
-                    url: image.url,
-                    detail: "high"
-                  }
-                },
-                {
-                  type: "text",
-                  text: question
-                }
-              ]
-            }
-          ];
-
-          const response = await handleStreamingResponse(messages, interaction, true);
-          
-        } catch (error) {
-          console.error('Error in analyze command:', error);
-          await interaction.editReply('*[BURT has a mental breakdown]* Sorry, something went wrong analyzing that image! 😵');
-        }
-        break;
-    }
-  }
-  
-  // Handle Buttons
-  if (interaction.isButton()) {
-    const gallery = activeGalleries.get(interaction.channelId);
-    if (!gallery) return;
-
-    try {
-      await interaction.deferUpdate();
-
-      if (interaction.customId === 'close') {
-        clearTimeout(gallery.timeoutId);
-        activeGalleries.delete(interaction.channelId);
-        await interaction.editReply({
-          content: 'Gallery closed.',
-          embeds: [],
-          components: []
-        });
         return;
       }
+      
+      userCooldowns.set(userId, Date.now() + COOLDOWN_DURATION);
 
-      const items = gallery.tweets || gallery.images;
-      let newIndex = gallery.currentIndex;
+      // Get the question before deferring
+      const question = interaction.options.getString('question');
+      console.log(`Processing question from ${interaction.user.username}: ${question}`);
 
-      if (interaction.customId === 'next' && newIndex < items.length - 1) {
-        newIndex = newIndex + 1;
-      } else if (interaction.customId === 'prev' && newIndex > 0) {
-        newIndex = newIndex - 1;
+      // Only defer if we haven't already replied
+      if (!interaction.replied && !interaction.deferred) {
+        await interaction.deferReply();
       }
 
-      gallery.currentIndex = newIndex;
+      // Process the question
+      let conversation = [
+        { role: "system", content: BURT_PROMPT },
+        { role: "user", content: question }
+      ];
 
-      const row = new ActionRowBuilder()
-        .addComponents(
-          new ButtonBuilder()
-            .setCustomId('prev')
-            .setLabel('Previous')
-            .setStyle(ButtonStyle.Primary)
-            .setDisabled(newIndex === 0),
-          new ButtonBuilder()
-            .setCustomId('next')
-            .setLabel('Next')
-            .setStyle(ButtonStyle.Primary)
-            .setDisabled(newIndex === items.length - 1),
-          new ButtonBuilder()
-            .setCustomId('close')
-            .setLabel('Close Gallery')
-            .setStyle(ButtonStyle.Danger)
-        );
+      const initialResponse = await openai.chat.completions.create({
+        model: "grok-beta",
+        messages: conversation,
+        tools: tools,
+        tool_choice: "auto"
+      });
 
-      if (gallery.tweets) {
-        const currentTweet = items[newIndex];
-        const embed = new EmbedBuilder()
-          .setTitle(`Tweet Links (${newIndex + 1}/${items.length})`)
-          .setDescription(`[View Tweet](${currentTweet.url})\n\nContext: ${currentTweet.content.substring(0, 200)}${currentTweet.content.length > 200 ? '...' : ''}`)
-          .setFooter({ 
-            text: `Posted by ${currentTweet.author} • Click title to view original message`
-          })
-          .setURL(currentTweet.messageLink)
-          .setTimestamp(currentTweet.timestamp)
-          .setColor('#1DA1F2');
+      const assistantMessage = initialResponse.choices[0].message;
+      conversation.push(assistantMessage);
 
-        if (currentTweet.image) {
-          embed.setImage(currentTweet.image);
+      let finalContent;
+
+      if (assistantMessage.tool_calls) {
+        for (const toolCall of assistantMessage.tool_calls) {
+          const result = await executeToolCall(toolCall, interaction);
+          conversation.push({
+            role: "tool",
+            content: JSON.stringify(result),
+            tool_call_id: toolCall.id
+          });
         }
 
-        await interaction.editReply({
-          embeds: [embed],
-          components: [row]
+        const finalResponse = await openai.chat.completions.create({
+          model: "grok-beta",
+          messages: conversation,
+          temperature: 0.7,
+          max_tokens: 1000
         });
-      } else {
-        const currentImage = items[newIndex];
-        const embed = new EmbedBuilder()
-          .setTitle(`Image Gallery (${newIndex + 1}/${items.length})`)
-          .setImage(currentImage.url)
-          .setFooter({ 
-            text: `Posted by ${currentImage.author} • Click title to view original message`
-          })
-          .setURL(currentImage.messageLink)
-          .setTimestamp(currentImage.timestamp);
 
-        await interaction.editReply({
-          embeds: [embed],
-          components: [row]
-        });
+        finalContent = finalResponse.choices[0].message.content;
+      } else {
+        finalContent = assistantMessage.content;
+      }
+
+      // Only edit reply if we've deferred
+      if (interaction.deferred) {
+        await interaction.editReply(sanitizeResponse(finalContent));
       }
 
     } catch (error) {
-      console.error('Error handling button interaction:', error);
+      console.error('Error in ask command:', error);
+      if (!interaction.replied && !interaction.deferred) {
+        await interaction.reply({ 
+          content: '*[BURT stares intensely at a wall]*',
+          ephemeral: true 
+        });
+      }
     }
   }
 });
@@ -1379,111 +889,6 @@ async function executeToolCall(toolCall, message) {
     };
   } finally {
     console.log('=== Tool Execution Completed ===\n');
-  }
-}
-
-// Update handleAskCommand to force tool usage when appropriate
-async function handleAskCommand(message, question) {
-  try {
-    console.log('\n=== Starting Ask Command ===');
-    console.log('Question:', question);
-
-    const serverKeywords = ['server', 'chat', 'going on', 'happening', 'whats up'];
-    const needsServerInfo = serverKeywords.some(k => question.toLowerCase().includes(k));
-    
-    console.log('Analysis:', { 
-      needsServerInfo, 
-      question,
-      messageLength: question.length 
-    });
-
-    let conversation = [
-      { 
-        role: "system", 
-        content: "You are BURT, a helpful and friendly Discord bot. Keep responses concise and engaging."
-      },
-      { role: "user", content: question }
-    ];
-
-    const initialResponse = await openai.chat.completions.create({
-      model: "grok-beta",
-      messages: conversation,
-      tools: needsServerInfo ? [
-        {
-          type: "function",
-          function: {
-            name: "getRecentMessages",
-            description: "Get recent messages from the Discord channel",
-            parameters: {
-              type: "object",
-              properties: {
-                limit: {
-                  type: "number",
-                  description: "Number of messages to retrieve"
-                }
-              }
-            }
-          }
-        }
-      ] : undefined,
-      tool_choice: needsServerInfo ? "auto" : "none"
-    });
-
-    console.log('=== Initial Response Received ===');
-    const assistantMessage = initialResponse.choices[0].message;
-    console.log('Response type:', {
-      hasContent: !!assistantMessage.content,
-      hasToolCalls: !!assistantMessage.tool_calls,
-      contentPreview: assistantMessage.content?.substring(0, 50)
-    });
-
-    // If no tool calls needed, return the response directly
-    if (!assistantMessage.tool_calls) {
-      console.log('=== Simple Response - No Tools Required ===');
-      return sanitizeResponse(assistantMessage.content);
-    }
-
-    // Process tool calls
-    console.log('\n=== Processing Tool Calls ===');
-    console.log('Number of tool calls:', assistantMessage.tool_calls.length);
-
-    for (const toolCall of assistantMessage.tool_calls) {
-      console.log(`\nExecuting tool call ${toolCall.id}:`, toolCall.function.name);
-      
-      const result = await executeToolCall(toolCall, message);
-      console.log('Tool execution completed with result size:', 
-        Array.isArray(result) ? result.length : 'N/A');
-
-      conversation.push({
-        role: "tool",
-        content: JSON.stringify(result),
-        tool_call_id: toolCall.id
-      });
-    }
-
-    // Get final response with tool results
-    console.log('\n=== Getting Final Response ===');
-    const finalResponse = await openai.chat.completions.create({
-      model: "grok-beta",
-      messages: conversation,
-      temperature: 0.7,
-      max_tokens: 1000
-    });
-
-    console.log('Final response received');
-    return sanitizeResponse(finalResponse.choices[0].message.content);
-
-  } catch (error) {
-    console.error('\n=== Error in handleAskCommand ===');
-    console.error('Error type:', error.constructor.name);
-    console.error('Error message:', error.message);
-    if (error.response) {
-      console.error('API Error:', {
-        status: error.response.status,
-        data: error.response.data
-      });
-    }
-    throw error;
   }
 }
 
