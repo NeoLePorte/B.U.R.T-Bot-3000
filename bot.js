@@ -514,9 +514,9 @@ client.on('interactionCreate', async interaction => {
       const question = interaction.options.getString('question');
       console.log(`Processing question from ${interaction.user.username}: ${question}`);
 
-      // Only defer if we haven't already replied
+      // Make the initial defer ephemeral
       if (!interaction.replied && !interaction.deferred) {
-        await interaction.deferReply();
+        await interaction.deferReply({ ephemeral: true });
       }
 
       // Process the question
@@ -559,9 +559,12 @@ client.on('interactionCreate', async interaction => {
         finalContent = assistantMessage.content;
       }
 
-      // Only edit reply if we've deferred
+      // Edit reply while maintaining ephemeral status
       if (interaction.deferred) {
-        await interaction.editReply(sanitizeResponse(finalContent));
+        await interaction.editReply({
+          content: sanitizeResponse(finalContent),
+          ephemeral: true
+        });
       }
 
     } catch (error) {
@@ -570,6 +573,11 @@ client.on('interactionCreate', async interaction => {
         await interaction.reply({ 
           content: '*[BURT stares intensely at a wall]*',
           ephemeral: true 
+        });
+      } else if (interaction.deferred) {
+        await interaction.editReply({
+          content: '*[BURT stares intensely at a wall]*',
+          ephemeral: true
         });
       }
     }
