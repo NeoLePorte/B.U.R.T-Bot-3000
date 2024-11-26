@@ -856,69 +856,51 @@ async function executeToolCall(toolCall, message) {
     // Add reaction tool execution
     if (toolCall.function.name === 'addReaction') {
       console.log('\n=== Adding Reaction ===');
-      console.log('Mood:', args.mood);
+      console.log('Raw arguments:', toolCall.function.arguments);
+      console.log('Parsed arguments:', args);
+      console.log('Message object exists:', !!message);
+      console.log('Guild exists:', !!message?.guild);
       
       try {
         // Get guild emojis
         const guildEmojis = message.guild.emojis.cache;
+        console.log('Available guild emojis count:', guildEmojis.size);
         
-        // Simple mood to emoji mapping
-        const moodMap = {
-          happy: ['😊', '😄', '🎉', '<:pog:', '<:happy:'],
-          excited: ['🔥', '🚀', '⚡', '<:hype:', '<:dank:'],
-          thoughtful: ['🤔', '💭', '🧠', '<:think:', '<:brain:'],
-          chaotic: ['🌪️', '🎲', '🎭', '<:wild:', '<:bye:'],
-          suspicious: ['👀', '🕵️', '🤨', '<:sus:', '<:grim:'],
-          testing: ['🧪', '⚗️', '🔬', '<:science:', '<:lab:']
-        };
-
         const mood = args.mood.toLowerCase();
-        let reaction;
+        console.log('Selected mood:', mood);
 
-        // First try to find a matching custom emoji
-        const customEmojis = Array.from(guildEmojis.values());
-        const matchingEmoji = customEmojis.find(emoji => 
-          emoji.name.toLowerCase().includes(mood) ||
-          (moodMap[mood]?.some(pattern => 
-            pattern.includes(emoji.name.toLowerCase())
-          ))
+        // Try to find a matching custom emoji first
+        const matchingEmoji = guildEmojis.find(emoji => 
+          emoji.name.toLowerCase().includes(mood)
         );
 
         if (matchingEmoji) {
-          console.log('Using custom emoji:', matchingEmoji.toString());
-          reaction = await message.react(matchingEmoji.id);
-        } else {
-          // Fallback to Unicode emoji
-          const unicodeEmojis = moodMap[mood]?.filter(e => !e.includes('<:')) || ['🤖'];
-          const randomEmoji = unicodeEmojis[Math.floor(Math.random() * unicodeEmojis.length)];
-          console.log('Using Unicode emoji:', randomEmoji);
-          reaction = await message.react(randomEmoji);
-        }
-
-        console.log('Reaction added successfully:', reaction.emoji.toString());
-        return {
-          success: true,
-          emoji: reaction.emoji.toString(),
-          mood: args.mood
-        };
-
-      } catch (error) {
-        console.error('Reaction error:', error);
-        try {
-          const fallbackReaction = await message.react('🤖');
-          console.log('Used fallback emoji');
+          console.log('Found matching custom emoji:', matchingEmoji.toString());
+          const reaction = await message.react(matchingEmoji.id);
+          console.log('Successfully added custom emoji reaction');
           return {
             success: true,
-            emoji: '🤖',
-            fallback: true
+            emoji: matchingEmoji.toString(),
+            mood: args.mood
           };
-        } catch (fallbackError) {
-          console.error('Fallback reaction failed:', fallbackError);
+        } else {
+          // Fallback to Unicode emoji
+          const unicodeEmoji = '🤖';
+          console.log('Using fallback emoji:', unicodeEmoji);
+          const reaction = await message.react(unicodeEmoji);
+          console.log('Successfully added Unicode emoji reaction');
           return {
-            success: false,
-            error: fallbackError.message
+            success: true,
+            emoji: unicodeEmoji,
+            mood: args.mood
           };
         }
+      } catch (error) {
+        console.error('Detailed reaction error:', error);
+        return {
+          success: false,
+          error: error.message
+        };
       }
     }
 
