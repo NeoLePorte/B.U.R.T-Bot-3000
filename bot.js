@@ -856,58 +856,61 @@ async function executeToolCall(toolCall, message) {
       // Get all available emojis from the guild
       const guildEmojis = message.guild.emojis.cache;
       console.log('Available guild emojis:', 
-        Array.from(guildEmojis.values()).map(e => `:${e.name}:`));
+        Array.from(guildEmojis.values()).map(e => `<:${e.name}:${e.id}>`));
       
-      // Define mood categories with emoji names (without colons)
+      // Define mood categories with both Unicode and custom emoji patterns
       const moodMap = {
         happy: {
-          unicode: ['😊', '😄', '🎉', '✨', '💖'],
-          emojiNames: ['happy', 'joy', 'smile', 'party', 'yay', 'pog']
+          unicode: ['😊', '😄', '🎉'],
+          patterns: ['happy', 'joy', 'smile', 'pog']
         },
         excited: {
           unicode: ['🔥', '🚀', '⚡'],
-          emojiNames: ['hype', 'fire', 'rocket', 'excited', 'wow', 'dank']
+          patterns: ['hype', 'fire', 'dank', 'wow']
         },
         thoughtful: {
           unicode: ['🤔', '💭', '🧠'],
-          emojiNames: ['think', 'brain', 'smart', 'idea', 'hmm']
+          patterns: ['think', 'brain', 'hmm']
         },
         chaotic: {
           unicode: ['🌪️', '🎲', '🎭'],
-          emojiNames: ['chaos', 'wild', 'crazy', 'random', 'bye']
+          patterns: ['chaos', 'wild', 'bye']
         }
       };
 
-      const mood = args.mood.toLowerCase();
-      const moodCategory = moodMap[mood] || { unicode: ['🤖'], emojiNames: [] };
-
       try {
-        // First try to find a matching custom emoji by name
-        const matchingCustomEmojis = guildEmojis.filter(emoji => 
-          moodCategory.emojiNames.includes(emoji.name.toLowerCase())
+        const mood = args.mood.toLowerCase();
+        const moodCategory = moodMap[mood] || { unicode: ['🤖'], patterns: [] };
+
+        // Try to find a custom emoji first
+        let selectedEmoji = null;
+        
+        // Look for custom emoji by name
+        const matchingEmoji = guildEmojis.find(emoji => 
+          moodCategory.patterns.some(pattern => 
+            emoji.name.toLowerCase().includes(pattern)
+          )
         );
 
-        let selectedEmoji;
-        if (matchingCustomEmojis.size > 0) {
-          // Randomly select from matching custom emojis
-          const customArray = Array.from(matchingCustomEmojis.values());
-          selectedEmoji = customArray[Math.floor(Math.random() * customArray.length)];
-          console.log('Selected custom emoji:', `:${selectedEmoji.name}:`);
+        if (matchingEmoji) {
+          // Use the custom emoji
+          selectedEmoji = matchingEmoji;
+          console.log('Using custom emoji:', `<:${matchingEmoji.name}:${matchingEmoji.id}>`);
         } else {
-          // Fallback to Unicode emojis
+          // Fallback to Unicode emoji
           selectedEmoji = moodCategory.unicode[Math.floor(Math.random() * moodCategory.unicode.length)];
-          console.log('Selected Unicode emoji:', selectedEmoji);
+          console.log('Using Unicode emoji:', selectedEmoji);
         }
 
-        // React with the selected emoji
-        const reaction = await message.react(selectedEmoji);
-        console.log('Successfully reacted with:', reaction.emoji.name);
+        // React using proper Discord.js methods
+        await message.react(selectedEmoji);
         
         return { 
           success: true, 
-          emoji: selectedEmoji.id ? `:${selectedEmoji.name}:` : selectedEmoji,
+          emoji: selectedEmoji.id ? `<:${selectedEmoji.name}:${selectedEmoji.id}>` : selectedEmoji,
           mood: args.mood
         };
+
       } catch (error) {
         console.error('Reaction error:', error);
         // Fallback to default emoji
