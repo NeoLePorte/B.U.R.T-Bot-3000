@@ -421,22 +421,49 @@ async function handleBurtInteraction(content, interaction = null, message = null
 // Function to get an emoji suggestion from Grok AI
 async function getEmojiSuggestion(content, availableEmojis) {
   try {
-    const emojiList = availableEmojis.map(e => e.toString()).join(', ');
+    // Create a list of valid emoji identifiers
+    const unicodeEmojis = ['👍', '❤️', '🔥', '🎉', '😊', '🤔', '😂', '🧪', '🤖', '✨'];
+    const customEmojis = availableEmojis.map(emoji => ({
+      id: emoji.id,
+      name: emoji.name,
+      identifier: emoji.toString() // This will give us the correct format: <:name:id>
+    }));
+
+    // Combine both types for Grok to choose from
+    const allEmojis = [
+      ...unicodeEmojis,
+      ...customEmojis.map(e => e.identifier)
+    ];
+
     const response = await openai.chat.completions.create({
       model: "grok-beta",
       messages: [
-        { role: "system", content: `As B.U.R.T., choose an emoji from the following list that matches the mood and style of the message content. Available emojis: ${emojiList}` },
+        { 
+          role: "system", 
+          content: `Select ONE emoji from this list. RESPOND WITH ONLY THE EMOJI: ${allEmojis.join(' ')}` 
+        },
         { role: "user", content: content }
       ],
-      max_tokens: 10
+      max_tokens: 10,
+      temperature: 0.7
     });
 
-    const emoji = response.choices[0].message.content.trim();
-    console.log('Suggested Emoji:', emoji); // Log the suggested emoji
-    return availableEmojis.some(e => e.toString() === emoji) ? emoji : null; // Validate the emoji
+    const selectedEmoji = response.choices[0].message.content.trim();
+    console.log('Selected emoji:', selectedEmoji);
+
+    // For custom emojis, verify the format matches <:name:id>
+    if (customEmojis.some(e => e.identifier === selectedEmoji)) {
+      return selectedEmoji;
+    }
+    // For unicode emojis, verify it's in our list
+    if (unicodeEmojis.includes(selectedEmoji)) {
+      return selectedEmoji;
+    }
+
+    return '🤖'; // Fallback emoji
   } catch (error) {
     console.error('Error getting emoji suggestion:', error);
-    return null;
+    return '🤖';
   }
 }
 
@@ -894,6 +921,8 @@ client.on('messageCreate', async message => {
         .replace(new RegExp(`<@${client.user.id}>`, 'gi'), '');
 
       const availableEmojis = message.guild.emojis.cache;
+      console.log('Available emojis:', availableEmojis.map(e => e.toString())); // Debug log
+
       const { response, emoji } = await handleBurtInteraction(content, null, message, previousMessages, availableEmojis);
       
       if (isBurtChannel || isThread) {
@@ -904,9 +933,19 @@ client.on('messageCreate', async message => {
 
       // Add the suggested emoji as a reaction with a delay
       if (emoji) {
-        setTimeout(() => {
-          message.react(emoji).catch(console.error);
-        }, 2000); // 2-second delay
+        console.log('Attempting to react with emoji:', emoji);
+        try {
+          const reaction = await message.react(emoji);
+          console.log('Successfully reacted with:', reaction.emoji.identifier);
+        } catch (error) {
+          console.error('Error reacting with emoji:', error);
+          // Fallback to default emoji if the reaction fails
+          try {
+            await message.react('🤖');
+          } catch (fallbackError) {
+            console.error('Fallback emoji reaction failed:', fallbackError);
+          }
+        }
       }
     }
   } catch (error) {
