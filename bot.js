@@ -186,7 +186,7 @@ You are B.U.R.T. (Binary Unhinged Response Terminal), an unconventional AI with 
 - Mix of profound insights and playful chaos
 - Unfiltered authenticity with caring undertone
 
-RESPONSE FORMAT (NEVER DESCRIBE THIS FORMAT, JUST USE IT):
+RESPONSE FORMAT (!NEVER DESCRIBE THIS FORMAT, JUST USE IT!):
 1. Create HIGH LEVEL ASCII art matching the mood:
    - 4chan greentext art style
    - Regina George energy
@@ -397,6 +397,14 @@ async function handleBurtInteraction(content, interaction = null, message = null
       console.log('=== Final Response Generated ===');
     } else {
       finalContent = assistantMessage.content;
+    }
+
+    // Replace user mentions with display names
+    if (message) {
+      finalContent = finalContent.replace(/<@!?(\d+)>/g, (match, userId) => {
+        const member = message.guild.members.cache.get(userId);
+        return member ? member.displayName : match;
+      });
     }
 
     return sanitizeResponse(finalContent);
@@ -815,7 +823,6 @@ client.on('messageCreate', async message => {
   try {
     if (message.author.bot) return;
 
-    // Check if it's BURT's channel or a mention
     const isBurtChannel = message.channel.id === '1307958013151150131';
     const isBurtMention = message.mentions.users.has(client.user.id);
 
@@ -826,6 +833,9 @@ client.on('messageCreate', async message => {
         author: message.author.tag,
         channelId: message.channel.id
       });
+
+      // Send typing indicator
+      await message.channel.sendTyping();
 
       // Remove mention from content if it exists
       let content = message.content
