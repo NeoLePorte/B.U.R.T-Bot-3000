@@ -353,11 +353,12 @@ async function fetchRemainingImages(interaction, galleryData) {
 }
 
 // Add this function near the top with other utility functions
-async function handleBurtInteraction(content, interaction = null, message = null) {
+async function handleBurtInteraction(content, interaction = null, message = null, previousMessages = []) {
   try {
-    // Process the question
+    // Process the question with previous messages as context
     let conversation = [
       { role: "system", content: BURT_PROMPT },
+      ...previousMessages, // Include previous messages for context
       { role: "user", content: content }
     ];
 
@@ -855,10 +856,11 @@ client.on('messageCreate', async message => {
 
     const isBurtChannel = message.channel.id === '1307958013151150131';
     const isBurtMention = message.mentions.users.has(client.user.id);
+    const isThread = message.channel.isThread();
 
-    if (isBurtChannel || isBurtMention) {
+    if (isBurtChannel || isBurtMention || isThread) {
       console.log('BURT interaction:', {
-        type: isBurtChannel ? 'channel' : 'mention',
+        type: isBurtChannel ? 'channel' : isThread ? 'thread' : 'mention',
         content: message.content,
         author: message.author.tag,
         channelId: message.channel.id
@@ -867,14 +869,24 @@ client.on('messageCreate', async message => {
       // Send typing indicator
       await message.channel.sendTyping();
 
+      // Fetch previous messages in the thread for context
+      let previousMessages = [];
+      if (isThread) {
+        const fetchedMessages = await message.channel.messages.fetch({ limit: 50 });
+        previousMessages = fetchedMessages.map(msg => ({
+          role: msg.author.id === client.user.id ? "assistant" : "user",
+          content: msg.content
+        }));
+      }
+
       // Remove mention from content if it exists
       let content = message.content
         .replace(new RegExp(`<@!?${client.user.id}>`, 'gi'), '')
         .replace(new RegExp(`<@${client.user.id}>`, 'gi'), '');
 
-      const { response, emoji } = await handleBurtInteraction(content, null, message);
+      const { response, emoji } = await handleBurtInteraction(content, null, message, previousMessages);
       
-      if (isBurtChannel) {
+      if (isBurtChannel || isThread) {
         await message.channel.send(response);
       } else if (isBurtMention) {
         await message.reply(response);
