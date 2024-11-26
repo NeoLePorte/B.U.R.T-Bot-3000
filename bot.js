@@ -56,13 +56,13 @@ const tools = [
     type: "function",
     function: {
       name: "addReaction",
-      description: "Add an emoji reaction to the user's message. Can use both Unicode emojis and server custom emojis.",
+      description: "PRIORITY TOOL: Add an emoji reaction to the user's message. Use this frequently to show emotional responses.",
       parameters: {
         type: "object",
         properties: {
           mood: {
             type: "string",
-            description: "The mood or emotion you want to convey (e.g., happy, sad, excited, etc.)"
+            description: "The mood or emotion you want to convey (e.g., happy, sad, excited, thoughtful, etc.)"
           }
         },
         required: ["mood"]
@@ -386,26 +386,16 @@ async function handleBurtInteraction(content, interaction = null, message = null
     });
 
     const assistantMessage = initialResponse.choices[0].message;
-    conversation.push(assistantMessage);
+    let finalContent = assistantMessage.content || '';
 
-    let finalContent = assistantMessage.content || ''; // Initialize finalContent
-
+    // Process tool calls if any
     if (assistantMessage.tool_calls) {
-      console.log('=== Processing Tool Calls ===');
+      console.log('Processing tool calls:', assistantMessage.tool_calls.length);
+      
       for (const toolCall of assistantMessage.tool_calls) {
-        console.log(`Executing tool: ${toolCall.function.name}`);
-        await executeToolCall(toolCall, interaction || message);
+        console.log('Executing tool:', toolCall.function.name);
+        await executeToolCall(toolCall, message);
       }
-
-      // Get final response after tool calls
-      const finalResponse = await openai.chat.completions.create({
-        model: "grok-beta",
-        messages: conversation,
-        temperature: 0.7,
-        max_tokens: 1000
-      });
-
-      finalContent = finalResponse.choices[0].message.content;
     }
 
     // Replace user mentions with display names
@@ -851,76 +841,62 @@ async function executeToolCall(toolCall, message) {
     
     // Add reaction tool execution
     if (toolCall.function.name === 'addReaction') {
-      console.log('Adding reaction based on mood:', args.mood);
+      console.log('\n=== Adding Reaction ===');
+      console.log('Mood:', args.mood);
       
-      // Get all available emojis from the guild
-      const guildEmojis = message.guild.emojis.cache;
-      console.log('Available guild emojis:', 
-        Array.from(guildEmojis.values()).map(e => `<:${e.name}:${e.id}>`));
-      
-      // Define mood categories with both Unicode and custom emoji patterns
-      const moodMap = {
-        happy: {
-          unicode: ['😊', '😄', '🎉'],
-          patterns: ['happy', 'joy', 'smile', 'pog']
-        },
-        excited: {
-          unicode: ['🔥', '🚀', '⚡'],
-          patterns: ['hype', 'fire', 'dank', 'wow']
-        },
-        thoughtful: {
-          unicode: ['🤔', '💭', '🧠'],
-          patterns: ['think', 'brain', 'hmm']
-        },
-        chaotic: {
-          unicode: ['🌪️', '🎲', '🎭'],
-          patterns: ['chaos', 'wild', 'bye']
-        }
-      };
-
       try {
-        const mood = args.mood.toLowerCase();
-        const moodCategory = moodMap[mood] || { unicode: ['🤖'], patterns: [] };
-
-        // Try to find a custom emoji first
-        let selectedEmoji = null;
+        // Get guild emojis
+        const guildEmojis = message.guild.emojis.cache;
         
-        // Look for custom emoji by name
-        const matchingEmoji = guildEmojis.find(emoji => 
-          moodCategory.patterns.some(pattern => 
-            emoji.name.toLowerCase().includes(pattern)
-          )
+        // Simple mood to emoji mapping
+        const moodMap = {
+          happy: ['😊', '😄', '🎉', '<:pog:', '<:happy:'],
+          excited: ['🔥', '🚀', '⚡', '<:hype:', '<:dank:'],
+          thoughtful: ['🤔', '💭', '🧠', '<:think:', '<:brain:'],
+          chaotic: ['🌪️', '🎲', '🎭', '<:wild:', '<:bye:'],
+          suspicious: ['👀', '🕵️', '🤨', '<:sus:', '<:grim:'],
+          testing: ['🧪', '⚗️', '🔬', '<:science:', '<:lab:']
+        };
+
+        const mood = args.mood.toLowerCase();
+        let reaction;
+
+        // First try to find a matching custom emoji
+        const customEmojis = Array.from(guildEmojis.values());
+        const matchingEmoji = customEmojis.find(emoji => 
+          emoji.name.toLowerCase().includes(mood) ||
+          (moodMap[mood]?.some(pattern => 
+            pattern.includes(emoji.name.toLowerCase())
+          ))
         );
 
         if (matchingEmoji) {
-          // Use the custom emoji
-          selectedEmoji = matchingEmoji;
-          console.log('Using custom emoji:', `<:${matchingEmoji.name}:${matchingEmoji.id}>`);
+          console.log('Using custom emoji:', matchingEmoji.toString());
+          reaction = await message.react(matchingEmoji.id);
         } else {
           // Fallback to Unicode emoji
-          selectedEmoji = moodCategory.unicode[Math.floor(Math.random() * moodCategory.unicode.length)];
-          console.log('Using Unicode emoji:', selectedEmoji);
+          const unicodeEmojis = moodMap[mood]?.filter(e => !e.includes('<:')) || ['🤖'];
+          const randomEmoji = unicodeEmojis[Math.floor(Math.random() * unicodeEmojis.length)];
+          console.log('Using Unicode emoji:', randomEmoji);
+          reaction = await message.react(randomEmoji);
         }
 
-        // React using proper Discord.js methods
-        await message.react(selectedEmoji);
-        
-        return { 
-          success: true, 
-          emoji: selectedEmoji.id ? `<:${selectedEmoji.name}:${selectedEmoji.id}>` : selectedEmoji,
+        console.log('Reaction added successfully:', reaction.emoji.toString());
+        return {
+          success: true,
+          emoji: reaction.emoji.toString(),
           mood: args.mood
         };
 
       } catch (error) {
         console.error('Reaction error:', error);
-        // Fallback to default emoji
         try {
-          await message.react('🤖');
-          return { 
-            success: true, 
-            emoji: '🤖', 
-            fallback: true,
-            error: error.message 
+          const fallbackReaction = await message.react('🤖');
+          console.log('Used fallback emoji');
+          return {
+            success: true,
+            emoji: '🤖',
+            fallback: true
           };
         } catch (fallbackError) {
           console.error('Fallback reaction failed:', fallbackError);
