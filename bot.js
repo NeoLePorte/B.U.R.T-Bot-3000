@@ -353,7 +353,7 @@ async function fetchRemainingImages(interaction, galleryData) {
 }
 
 // Add this function near the top with other utility functions
-async function handleBurtInteraction(content, interaction = null, message = null, previousMessages = []) {
+async function handleBurtInteraction(content, interaction = null, message = null, previousMessages = [], availableEmojis) {
   try {
     // Process the question with previous messages as context
     let conversation = [
@@ -409,7 +409,7 @@ async function handleBurtInteraction(content, interaction = null, message = null
     }
 
     // Request an emoji suggestion from Grok AI
-    const emojiSuggestion = await getEmojiSuggestion(content);
+    const emojiSuggestion = await getEmojiSuggestion(content, availableEmojis);
 
     return { response: sanitizeResponse(finalContent), emoji: emojiSuggestion };
   } catch (error) {
@@ -419,12 +419,13 @@ async function handleBurtInteraction(content, interaction = null, message = null
 }
 
 // Function to get an emoji suggestion from Grok AI
-async function getEmojiSuggestion(content) {
+async function getEmojiSuggestion(content, availableEmojis) {
   try {
+    const emojiList = availableEmojis.map(e => e.toString()).join(', ');
     const response = await openai.chat.completions.create({
       model: "grok-beta",
       messages: [
-        { role: "system", content: "As B.U.R.T., suggest an emoji that matches the mood and style of the following message content. Remember, you are an intellectual maverick with chaotic but insightful energy." },
+        { role: "system", content: `As B.U.R.T., choose an emoji from the following list that matches the mood and style of the message content. Available emojis: ${emojiList}` },
         { role: "user", content: content }
       ],
       max_tokens: 10
@@ -432,7 +433,7 @@ async function getEmojiSuggestion(content) {
 
     const emoji = response.choices[0].message.content.trim();
     console.log('Suggested Emoji:', emoji); // Log the suggested emoji
-    return isValidEmoji(emoji) ? emoji : null; // Validate the emoji
+    return availableEmojis.some(e => e.toString() === emoji) ? emoji : null; // Validate the emoji
   } catch (error) {
     console.error('Error getting emoji suggestion:', error);
     return null;
@@ -892,7 +893,8 @@ client.on('messageCreate', async message => {
         .replace(new RegExp(`<@!?${client.user.id}>`, 'gi'), '')
         .replace(new RegExp(`<@${client.user.id}>`, 'gi'), '');
 
-      const { response, emoji } = await handleBurtInteraction(content, null, message, previousMessages);
+      const availableEmojis = message.guild.emojis.cache;
+      const { response, emoji } = await handleBurtInteraction(content, null, message, previousMessages, availableEmojis);
       
       if (isBurtChannel || isThread) {
         await message.channel.send(response);
