@@ -56,13 +56,13 @@ const tools = [
     type: "function",
     function: {
       name: "addReaction",
-      description: "Add an emoji reaction to the user's message. Choose an appropriate emoji based on the context and mood.",
+      description: "Add an emoji reaction to the user's message. Can use both Unicode emojis and server custom emojis.",
       parameters: {
         type: "object",
         properties: {
           mood: {
             type: "string",
-            description: "The mood or emotion you want to convey with the reaction"
+            description: "The mood or emotion you want to convey (e.g., happy, sad, excited, etc.)"
           }
         },
         required: ["mood"]
@@ -388,15 +388,34 @@ async function handleBurtInteraction(content, interaction = null, message = null
     const assistantMessage = initialResponse.choices[0].message;
     conversation.push(assistantMessage);
 
+    let finalContent = assistantMessage.content || ''; // Initialize finalContent
+
     if (assistantMessage.tool_calls) {
       console.log('=== Processing Tool Calls ===');
       for (const toolCall of assistantMessage.tool_calls) {
         console.log(`Executing tool: ${toolCall.function.name}`);
         await executeToolCall(toolCall, interaction || message);
       }
+
+      // Get final response after tool calls
+      const finalResponse = await openai.chat.completions.create({
+        model: "grok-beta",
+        messages: conversation,
+        temperature: 0.7,
+        max_tokens: 1000
+      });
+
+      finalContent = finalResponse.choices[0].message.content;
     }
 
-    // ... rest of your response handling ...
+    // Replace user mentions with display names
+    if (message) {
+      finalContent = finalContent.replace(/<@!?(\d+)>/g, (match, userId) => {
+        const member = message.guild.members.cache.get(userId);
+        return member ? member.displayName : match;
+      });
+    }
+
     return { response: sanitizeResponse(finalContent) };
   } catch (error) {
     console.error('Error in handleBurtInteraction:', error);
@@ -596,16 +615,16 @@ const functions = [
     type: "function",
     function: {
       name: "addReaction",
-      description: "Add an emoji reaction to the user's message",
+      description: "Add an emoji reaction to the user's message. Can use both Unicode emojis and server custom emojis.",
       parameters: {
         type: "object",
         properties: {
-          emoji: {
+          mood: {
             type: "string",
-            description: "The emoji to react with (e.g., '', '❤️', '🔧', etc.)"
+            description: "The mood or emotion you want to convey (e.g., happy, sad, excited, etc.)"
           }
         },
-        required: ["emoji"]
+        required: ["mood"]
       }
     }
   }
@@ -830,7 +849,85 @@ async function executeToolCall(toolCall, message) {
       return processedMessages;
     }
     
-    // ... handle other tools ...
+    // Add reaction tool execution
+    if (toolCall.function.name === 'addReaction') {
+      console.log('Adding reaction based on mood:', args.mood);
+      
+      // Get all available emojis from the guild
+      const guildEmojis = message.guild.emojis.cache;
+      console.log('Available guild emojis:', 
+        Array.from(guildEmojis.values()).map(e => `:${e.name}:`));
+      
+      // Define mood categories with emoji names (without colons)
+      const moodMap = {
+        happy: {
+          unicode: ['😊', '😄', '🎉', '✨', '💖'],
+          emojiNames: ['happy', 'joy', 'smile', 'party', 'yay', 'pog']
+        },
+        excited: {
+          unicode: ['🔥', '🚀', '⚡'],
+          emojiNames: ['hype', 'fire', 'rocket', 'excited', 'wow', 'dank']
+        },
+        thoughtful: {
+          unicode: ['🤔', '💭', '🧠'],
+          emojiNames: ['think', 'brain', 'smart', 'idea', 'hmm']
+        },
+        chaotic: {
+          unicode: ['🌪️', '🎲', '🎭'],
+          emojiNames: ['chaos', 'wild', 'crazy', 'random', 'bye']
+        }
+      };
+
+      const mood = args.mood.toLowerCase();
+      const moodCategory = moodMap[mood] || { unicode: ['🤖'], emojiNames: [] };
+
+      try {
+        // First try to find a matching custom emoji by name
+        const matchingCustomEmojis = guildEmojis.filter(emoji => 
+          moodCategory.emojiNames.includes(emoji.name.toLowerCase())
+        );
+
+        let selectedEmoji;
+        if (matchingCustomEmojis.size > 0) {
+          // Randomly select from matching custom emojis
+          const customArray = Array.from(matchingCustomEmojis.values());
+          selectedEmoji = customArray[Math.floor(Math.random() * customArray.length)];
+          console.log('Selected custom emoji:', `:${selectedEmoji.name}:`);
+        } else {
+          // Fallback to Unicode emojis
+          selectedEmoji = moodCategory.unicode[Math.floor(Math.random() * moodCategory.unicode.length)];
+          console.log('Selected Unicode emoji:', selectedEmoji);
+        }
+
+        // React with the selected emoji
+        const reaction = await message.react(selectedEmoji);
+        console.log('Successfully reacted with:', reaction.emoji.name);
+        
+        return { 
+          success: true, 
+          emoji: selectedEmoji.id ? `:${selectedEmoji.name}:` : selectedEmoji,
+          mood: args.mood
+        };
+      } catch (error) {
+        console.error('Reaction error:', error);
+        // Fallback to default emoji
+        try {
+          await message.react('🤖');
+          return { 
+            success: true, 
+            emoji: '🤖', 
+            fallback: true,
+            error: error.message 
+          };
+        } catch (fallbackError) {
+          console.error('Fallback reaction failed:', fallbackError);
+          return {
+            success: false,
+            error: fallbackError.message
+          };
+        }
+      }
+    }
 
     throw new Error(`Unknown tool: ${toolCall.function.name}`);
   } catch (error) {
