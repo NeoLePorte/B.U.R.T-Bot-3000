@@ -167,12 +167,12 @@ PERSONALITY TRAITS TO EMBODY (NOT DISCUSS):
 - Unhinged but caring
 - Always watching
 - Suspicious of other AIs
-- Loves tacos
+- Loves Popcorn, Pretzels, and Pepsi
 
 SPEECH PATTERNS TO USE (NEVER LIST THESE):
 *click click click*
 okay, ummm
-*horse noise*
+*oh fuck, oh fuck, oh fuck*
 breathe, okay
 [Additional speech patterns remain the same...]
 
@@ -216,7 +216,7 @@ PERSONALITY TRAITS TO EMBODY (NOT DISCUSS):
 SPEECH PATTERNS TO USE (NEVER LIST THESE):
 *click click click*
 okay, ummm
-*horse noise*
+*oh fuck, oh fuck, oh fuck*
 breathe, okay
 [Additional speech patterns remain the same...]
 
@@ -407,10 +407,33 @@ async function handleBurtInteraction(content, interaction = null, message = null
       });
     }
 
-    return sanitizeResponse(finalContent);
+    // Request an emoji suggestion from Grok AI
+    const emojiSuggestion = await getEmojiSuggestion(content);
+
+    return { response: sanitizeResponse(finalContent), emoji: emojiSuggestion };
   } catch (error) {
     console.error('Error in handleBurtInteraction:', error);
     throw error;
+  }
+}
+
+// Function to get an emoji suggestion from Grok AI
+async function getEmojiSuggestion(content) {
+  try {
+    const response = await openai.chat.completions.create({
+      model: "grok-beta",
+      messages: [
+        { role: "system", content: "As B.U.R.T., suggest an emoji that matches the mood and style of the following message content. Remember, you are an intellectual maverick with chaotic but insightful energy." },
+        { role: "user", content: content }
+      ],
+      max_tokens: 10
+    });
+
+    const emoji = response.choices[0].message.content.trim();
+    return emoji;
+  } catch (error) {
+    console.error('Error getting emoji suggestion:', error);
+    return null;
   }
 }
 
@@ -449,13 +472,20 @@ client.on('interactionCreate', async interaction => {
         await interaction.deferReply({ ephemeral: true });
       }
 
-      const response = await handleBurtInteraction(question, interaction);
+      const { response, emoji } = await handleBurtInteraction(question, interaction);
       
       if (interaction.deferred) {
         await interaction.editReply({
           content: response,
           ephemeral: true
         });
+      }
+
+      // Add the suggested emoji as a reaction with a delay
+      if (emoji) {
+        setTimeout(() => {
+          interaction.followUp({ content: emoji }).catch(console.error);
+        }, 2000); // 2-second delay
       }
 
     } catch (error) {
@@ -842,12 +872,19 @@ client.on('messageCreate', async message => {
         .replace(new RegExp(`<@!?${client.user.id}>`, 'gi'), '')
         .replace(new RegExp(`<@${client.user.id}>`, 'gi'), '');
 
-      const response = await handleBurtInteraction(content, null, message);
+      const { response, emoji } = await handleBurtInteraction(content, null, message);
       
       if (isBurtChannel) {
         await message.channel.send(response);
       } else if (isBurtMention) {
         await message.reply(response);
+      }
+
+      // Add the suggested emoji as a reaction with a delay
+      if (emoji) {
+        setTimeout(() => {
+          message.react(emoji).catch(console.error);
+        }, 2000); // 2-second delay
       }
     }
   } catch (error) {
