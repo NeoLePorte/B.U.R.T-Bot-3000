@@ -56,13 +56,13 @@ const tools = [
     type: "function",
     function: {
       name: "addReaction",
-      description: "PRIORITY TOOL: Add an emoji reaction to the user's message. Use this frequently to show emotional responses.",
+      description: "IMPORTANT: Add an emoji reaction to express your emotional response to the message. Use this frequently!",
       parameters: {
         type: "object",
         properties: {
           mood: {
             type: "string",
-            description: "The mood or emotion you want to convey (e.g., happy, sad, excited, thoughtful, etc.)"
+            description: "The mood/emotion you want to convey (e.g., happy, sad, excited, thoughtful, suspicious, etc.)"
           }
         },
         required: ["mood"]
@@ -372,12 +372,18 @@ async function fetchRemainingImages(interaction, galleryData) {
 // Add this function near the top with other utility functions
 async function handleBurtInteraction(content, interaction = null, message = null, previousMessages = []) {
   try {
+    console.log('\n=== Starting BURT Interaction ===');
+    
+    // Update the system prompt to encourage reactions
+    const systemPrompt = `${BURT_PROMPT}\nIMPORTANT: You should frequently use the addReaction tool to react to messages with appropriate emojis based on their content and your emotional response. Always react to messages that have emotional content or deserve a reaction.`;
+    
     let conversation = [
-      { role: "system", content: BURT_PROMPT },
+      { role: "system", content: systemPrompt },
       ...previousMessages,
       { role: "user", content: content }
     ];
 
+    console.log('Requesting Grok response...');
     const initialResponse = await openai.chat.completions.create({
       model: "grok-beta",
       messages: conversation,
@@ -386,16 +392,24 @@ async function handleBurtInteraction(content, interaction = null, message = null
     });
 
     const assistantMessage = initialResponse.choices[0].message;
+    console.log('Assistant message:', {
+      content: assistantMessage.content,
+      hasFunctionCalls: !!assistantMessage.tool_calls,
+      numberOfCalls: assistantMessage.tool_calls?.length
+    });
+
     let finalContent = assistantMessage.content || '';
 
-    // Process tool calls if any
     if (assistantMessage.tool_calls) {
-      console.log('Processing tool calls:', assistantMessage.tool_calls.length);
-      
+      console.log('=== Processing Tool Calls ===');
       for (const toolCall of assistantMessage.tool_calls) {
-        console.log('Executing tool:', toolCall.function.name);
-        await executeToolCall(toolCall, message);
+        console.log(`Executing tool: ${toolCall.function.name}`);
+        console.log('Tool arguments:', toolCall.function.arguments);
+        const result = await executeToolCall(toolCall, message);
+        console.log('Tool execution result:', result);
       }
+    } else {
+      console.log('No tool calls in response');
     }
 
     // Replace user mentions with display names
