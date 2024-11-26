@@ -51,6 +51,23 @@ const tools = [
         required: []
       }
     }
+  },
+  {
+    type: "function",
+    function: {
+      name: "addReaction",
+      description: "Add an emoji reaction to the user's message. Choose an appropriate emoji based on the context and mood.",
+      parameters: {
+        type: "object",
+        properties: {
+          mood: {
+            type: "string",
+            description: "The mood or emotion you want to convey with the reaction"
+          }
+        },
+        required: ["mood"]
+      }
+    }
   }
 ];
 
@@ -353,12 +370,11 @@ async function fetchRemainingImages(interaction, galleryData) {
 }
 
 // Add this function near the top with other utility functions
-async function handleBurtInteraction(content, interaction = null, message = null, previousMessages = [], availableEmojis) {
+async function handleBurtInteraction(content, interaction = null, message = null, previousMessages = []) {
   try {
-    // Process the question with previous messages as context
     let conversation = [
       { role: "system", content: BURT_PROMPT },
-      ...previousMessages, // Include previous messages for context
+      ...previousMessages,
       { role: "user", content: content }
     ];
 
@@ -372,46 +388,16 @@ async function handleBurtInteraction(content, interaction = null, message = null
     const assistantMessage = initialResponse.choices[0].message;
     conversation.push(assistantMessage);
 
-    let finalContent;
-
     if (assistantMessage.tool_calls) {
       console.log('=== Processing Tool Calls ===');
       for (const toolCall of assistantMessage.tool_calls) {
         console.log(`Executing tool: ${toolCall.function.name}`);
-        const result = await executeToolCall(toolCall, interaction || message);
-        conversation.push({
-          role: "tool",
-          content: JSON.stringify(result),
-          tool_call_id: toolCall.id
-        });
+        await executeToolCall(toolCall, interaction || message);
       }
-
-      console.log('=== Generating Final Response ===');
-      const finalResponse = await openai.chat.completions.create({
-        model: "grok-beta",
-        messages: conversation,
-        temperature: 0.7,
-        max_tokens: 1000
-      });
-
-      finalContent = finalResponse.choices[0].message.content;
-      console.log('=== Final Response Generated ===');
-    } else {
-      finalContent = assistantMessage.content;
     }
 
-    // Replace user mentions with display names
-    if (message) {
-      finalContent = finalContent.replace(/<@!?(\d+)>/g, (match, userId) => {
-        const member = message.guild.members.cache.get(userId);
-        return member ? member.displayName : match;
-      });
-    }
-
-    // Request an emoji suggestion from Grok AI
-    const emojiSuggestion = await getEmojiSuggestion(content, availableEmojis);
-
-    return { response: sanitizeResponse(finalContent), emoji: emojiSuggestion };
+    // ... rest of your response handling ...
+    return { response: sanitizeResponse(finalContent) };
   } catch (error) {
     console.error('Error in handleBurtInteraction:', error);
     throw error;
