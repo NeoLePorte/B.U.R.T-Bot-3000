@@ -501,7 +501,7 @@ async function getEmojiSuggestion(content, availableEmojis) {
       "🎉",
       "😊",
       "🤔",
-      "😂",
+      "",
       "🧪",
       "🤖",
       "✨",
@@ -575,48 +575,19 @@ client.on("interactionCreate", async (interaction) => {
 
       if (cooldownEnd && Date.now() < cooldownEnd) {
         const remainingTime = Math.ceil((cooldownEnd - Date.now()) / 1000);
-        if (!interaction.replied && !interaction.deferred) {
-          await interaction.reply({
-            content: `*[BURT twitches nervously]* The voices say we need to wait ${remainingTime} more seconds...`,
-            ephemeral: true,
-          });
-        }
+        await interaction.reply({
+          content: `*[BURT twitches nervously]* The voices say we need to wait ${remainingTime} more seconds...`,
+          ephemeral: true,
+        });
         return;
       }
 
       userCooldowns.set(userId, Date.now() + COOLDOWN_DURATION);
-
-      // Get the question before deferring
       const question = interaction.options.getString("question");
-      console.log(
-        `Processing question from ${interaction.user.username}: ${question}`
-      );
+      await interaction.deferReply({ ephemeral: true });
 
-      // Make the initial defer ephemeral
-      if (!interaction.replied && !interaction.deferred) {
-        await interaction.deferReply({ ephemeral: true });
-      }
-
-      const { response, emoji } = await handleBurtInteraction(
-        question,
-        interaction
-      );
-
-      if (interaction.deferred) {
-        await interaction.editReply({
-          content: response,
-          ephemeral: true,
-        });
-      }
-
-      // Add the suggested emoji as a reaction with a delay
-      if (emoji) {
-        setTimeout(() => {
-          interaction
-            .followUp({ content: emoji, ephemeral: true })
-            .catch(console.error);
-        }, 2000); // 2-second delay
-      }
+      const { response } = await handleBurtInteraction(question, interaction);
+      await interaction.editReply({ content: response, ephemeral: true });
     } catch (error) {
       console.error("Error in ask command:", error);
       if (!interaction.replied && !interaction.deferred) {
@@ -940,88 +911,78 @@ async function executeToolCall(toolCall, message) {
     // Add reaction tool execution
     if (toolCall.function.name === "addReaction") {
       console.log("\n=== Adding Reaction ===");
-      const args = JSON.parse(toolCall.function.arguments);
       console.log("Mood:", args.mood);
-      console.log("Message object exists:", !!message);
-      console.log("Guild exists:", !!message?.guild);
+
+      if (!message?.guild) {
+        console.log("No guild available for reaction");
+        return { error: true, message: "No guild available" };
+      }
 
       try {
-        // Log available guild emojis
-        const guildEmojis = message.guild.emojis.cache;
-        console.log(
-          "Available guild emojis:",
-          Array.from(guildEmojis.values()).map((e) => `<:${e.name}:${e.id}>`)
-        );
-
-        // Simple mood to emoji mapping
-        const moodMap = {
-          happy: ["😊", "😄", "🎉"],
-          excited: ["🔥", "🚀", "⚡"],
-          thoughtful: ["🤔", "💭", "🧠"],
-          suspicious: ["👀", "🕵️", "🤨"],
-          chaotic: ["🌪️", "🎲", "🎭"],
-        };
-
-        // Get the mood's emojis or default to robot emoji
-        const mood = args.mood.toLowerCase();
-        console.log("Processing mood:", mood);
-        const moodEmojis = moodMap[mood] || ["🤖"];
-        console.log("Available mood emojis:", moodEmojis);
-
-        // Try custom emoji first
-        const customEmoji = message.guild.emojis.cache.find((emoji) =>
-          emoji.name.toLowerCase().includes(mood)
-        );
-        console.log(
-          "Found custom emoji:",
-          customEmoji ? `<:${customEmoji.name}:${customEmoji.id}>` : "none"
+        // First try to find a custom emoji that matches the mood
+        const customEmoji = message.guild.emojis.cache.find(emoji => 
+          emoji.name.toLowerCase().includes(args.mood.toLowerCase())
         );
 
         if (customEmoji) {
-          // Using the proper way to react with custom emoji
-          console.log(
-            "Attempting to react with custom emoji ID:",
-            customEmoji.id
-          );
+          console.log("Found custom emoji:", customEmoji.toString());
+          // Can use any of these formats:
+          // customEmoji.id
+          // `<:${customEmoji.name}:${customEmoji.id}>`
+          // `${customEmoji.name}:${customEmoji.id}`
           await message.react(customEmoji.id);
-          console.log(
-            "Successfully reacted with custom emoji:",
-            customEmoji.toString()
-          );
-        } else {
-          // Use Unicode emoji
-          const randomEmoji =
-            moodEmojis[Math.floor(Math.random() * moodEmojis.length)];
-          console.log("Attempting to react with Unicode emoji:", randomEmoji);
-          await message.react(randomEmoji);
-          console.log("Successfully reacted with Unicode emoji:", randomEmoji);
+          return {
+            success: true,
+            mood: args.mood,
+            emoji: customEmoji.toString(),
+            type: 'custom'
+          };
         }
 
+        // Fallback to Unicode emojis with expanded mapping
+        const moodMap = {
+          happy: ["😊", "😄", "🎉", "💖", "😸"],
+          excited: ["🔥", "🚀", "⚡", "✨", "🌟"],
+          thoughtful: ["🤔", "💭", "🧠", "🎯", "🔮"],
+          suspicious: ["👀", "🕵️", "🤨", "🧐", "🔍"],
+          chaotic: ["🌪️", "🎲", "🎭", "🃏", "🌀"],
+          sad: ["😢", "😭", "💔", "🥺", "😿"],
+          angry: ["😠", "😡", "💢", "🤬", "👿"],
+          confused: ["😕", "😵", "❓", "🤯", "💫"],
+          sarcastic: ["😏", "🙄", "😒", "💅", "🎭"],
+          evil: ["😈", "👿", "🦹", "🕴️", "🎭"],
+          robot: ["🤖", "⚙️", "🔧", "💻", "🎮"]
+        };
+
+        // Get emoji array for mood or default to robot mood
+        const moodEmojis = moodMap[args.mood.toLowerCase()] || moodMap.robot;
+        const randomEmoji = moodEmojis[Math.floor(Math.random() * moodEmojis.length)];
+        
+        await message.react(randomEmoji);
         return {
           success: true,
           mood: args.mood,
-          emoji: customEmoji ? customEmoji.toString() : randomEmoji,
+          emoji: randomEmoji,
+          type: 'unicode'
         };
+
       } catch (error) {
-        console.error("Detailed reaction error:", error);
-        console.error("Error stack:", error.stack);
-        // Fallback to default emoji
+        console.error("Reaction error:", error);
+        // Fallback to robot emoji
         try {
-          console.log("Attempting fallback reaction with 🤖");
           await message.react("🤖");
-          console.log("Fallback reaction successful");
           return {
             success: true,
             fallback: true,
             originalError: error.message,
+            emoji: "🤖"
           };
         } catch (fallbackError) {
           console.error("Fallback reaction failed:", fallbackError);
-          console.error("Fallback error stack:", fallbackError.stack);
           return {
             success: false,
             error: fallbackError.message,
-            originalError: error.message,
+            originalError: error.message
           };
         }
       }
@@ -1032,7 +993,7 @@ async function executeToolCall(toolCall, message) {
     console.error("Tool execution error:", error);
     return {
       error: true,
-      message: error.message,
+      message: error.message
     };
   } finally {
     console.log("=== Tool Execution Completed ===\n");
@@ -1077,68 +1038,46 @@ client.on("messageCreate", async (message) => {
     const isThread = message.channel.isThread();
 
     if (isBurtChannel || isBurtMention || isThread) {
-      console.log("BURT interaction:", {
-        type: isBurtChannel ? "channel" : isThread ? "thread" : "mention",
-        content: message.content,
-        author: message.author.tag,
-        channelId: message.channel.id,
-      });
+      // Check cooldown
+      const userId = message.author.id;
+      const cooldownEnd = userCooldowns.get(userId);
 
-      // Send typing indicator
-      await message.channel.sendTyping();
-
-      // Fetch previous messages in the thread for context
-      let previousMessages = [];
-      if (isThread) {
-        const fetchedMessages = await message.channel.messages.fetch({
-          limit: 50,
-        });
-        previousMessages = fetchedMessages.map((msg) => ({
-          role: msg.author.id === client.user.id ? "assistant" : "user",
-          content: msg.content,
-        }));
+      if (cooldownEnd && Date.now() < cooldownEnd) {
+        return; // Silent cooldown for messages
       }
+
+      userCooldowns.set(userId, Date.now() + COOLDOWN_DURATION);
+      await message.channel.sendTyping();
 
       // Remove mention from content if it exists
       let content = message.content
         .replace(new RegExp(`<@!?${client.user.id}>`, "gi"), "")
-        .replace(new RegExp(`<@${client.user.id}>`, "gi"), "");
+        .trim();
 
-      const availableEmojis = message.guild.emojis.cache;
-      console.log(
-        "Available emojis:",
-        availableEmojis.map((e) => e.toString())
-      ); // Debug log
+      // Get previous messages for context if in a thread
+      let previousMessages = [];
+      if (isThread) {
+        const fetchedMessages = await message.channel.messages.fetch({ limit: 10 });
+        previousMessages = fetchedMessages
+          .reverse()
+          .map(msg => ({
+            role: msg.author.id === client.user.id ? "assistant" : "user",
+            content: msg.content
+          }));
+      }
 
-      const { response, emoji } = await handleBurtInteraction(
+      const { response } = await handleBurtInteraction(
         content,
         null,
         message,
-        previousMessages,
-        availableEmojis
+        previousMessages
       );
 
+      // Send response based on interaction type
       if (isBurtChannel || isThread) {
         await message.channel.send(response);
       } else if (isBurtMention) {
         await message.reply(response);
-      }
-
-      // Add the suggested emoji as a reaction with a delay
-      if (emoji) {
-        console.log("Attempting to react with emoji:", emoji);
-        try {
-          const reaction = await message.react(emoji);
-          console.log("Successfully reacted with:", reaction.emoji.identifier);
-        } catch (error) {
-          console.error("Error reacting with emoji:", error);
-          // Fallback to default emoji if the reaction fails
-          try {
-            await message.react("🤖");
-          } catch (fallbackError) {
-            console.error("Fallback emoji reaction failed:", fallbackError);
-          }
-        }
       }
     }
   } catch (error) {
