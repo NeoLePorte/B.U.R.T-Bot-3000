@@ -82,6 +82,44 @@ const tools = [
       },
     },
   },
+  {
+    type: "function",
+    function: {
+      name: "getUserInfo",
+      description: "Get information about a Discord user",
+      parameters: {
+        type: "object",
+        properties: {
+          userId: {
+            type: "string",
+            description: "Discord user ID",
+          },
+        },
+        required: ["userId"],
+      },
+    },
+  },
+  {
+    type: "function",
+    function: {
+      name: "searchGif",
+      description: "Search for a reaction GIF",
+      parameters: {
+        type: "object",
+        properties: {
+          searchTerm: {
+            type: "string",
+            description: "What to search for",
+          },
+          mood: {
+            type: "string",
+            description: "The mood/emotion of the GIF",
+          },
+        },
+        required: ["searchTerm", "mood"],
+      },
+    },
+  }
 ];
 
 const client = new Client({
@@ -395,63 +433,57 @@ async function fetchRemainingImages(interaction, galleryData) {
   }
 }
 
-// Add this function near the top with other utility functions
-async function handleBurtInteraction(
-  content,
-  interaction = null,
-  message = null,
-  previousMessages = []
-) {
+// Update the handleBurtInteraction function
+async function handleBurtInteraction(content, interaction = null, message = null, previousMessages = []) {
   try {
     console.log("\n=== Starting BURT Interaction ===");
-
-    // Update the system prompt to encourage reactions
-    const systemPrompt = `${BURT_PROMPT}\nIMPORTANT: You should frequently use the addReaction tool to react to messages with appropriate emojis based on their content and your emotional response. Always react to messages that have emotional content or deserve a reaction.`;
-
-    let conversation = [
-      { role: "system", content: systemPrompt },
-      ...previousMessages,
-      { role: "user", content: content },
-    ];
-
-    console.log("Requesting Grok response...");
-    const initialResponse = await openai.chat.completions.create({
+    
+    // Initial completion request
+    const response = await openai.chat.completions.create({
       model: "grok-beta",
-      messages: conversation,
+      messages: [
+        { role: "system", content: BURT_PROMPT },
+        ...previousMessages,
+        { role: "user", content }
+      ],
       tools: tools,
-      tool_choice: "auto",
+      tool_choice: "auto", // Let the model decide when to use tools
     });
 
-    const assistantMessage = initialResponse.choices[0].message;
-    console.log("Assistant message:", {
-      content: assistantMessage.content,
-      hasFunctionCalls: !!assistantMessage.tool_calls,
-      numberOfCalls: assistantMessage.tool_calls?.length,
-    });
+    let assistantMessage = response.choices[0].message;
+    let finalResponse = assistantMessage.content;
 
-    let finalContent = assistantMessage.content || "";
-
+    // If the model wants to use tools
     if (assistantMessage.tool_calls) {
-      console.log("=== Processing Tool Calls ===");
+      const messages = [
+        { role: "system", content: BURT_PROMPT },
+        ...previousMessages,
+        { role: "user", content },
+        assistantMessage
+      ];
+
+      // Execute each tool call and add results to conversation
       for (const toolCall of assistantMessage.tool_calls) {
-        console.log(`Executing tool: ${toolCall.function.name}`);
-        console.log("Tool arguments:", toolCall.function.arguments);
         const result = await executeToolCall(toolCall, message);
-        console.log("Tool execution result:", result);
+        messages.push({
+          role: "tool",
+          content: JSON.stringify(result),
+          tool_call_id: toolCall.id
+        });
       }
-    } else {
-      console.log("No tool calls in response");
-    }
 
-    // Replace user mentions with display names
-    if (message) {
-      finalContent = finalContent.replace(/<@!?(\d+)>/g, (match, userId) => {
-        const member = message.guild.members.cache.get(userId);
-        return member ? member.displayName : match;
+      // Get final response with tool results
+      const finalCompletion = await openai.chat.completions.create({
+        model: "grok-beta",
+        messages: messages,
+        tools: tools,
+        tool_choice: "none" // Force text response after tool use
       });
+
+      finalResponse = finalCompletion.choices[0].message.content;
     }
 
-    return { response: sanitizeResponse(finalContent) };
+    return { response: sanitizeResponse(finalResponse) };
   } catch (error) {
     console.error("Error in handleBurtInteraction:", error);
     throw error;
