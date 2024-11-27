@@ -883,94 +883,103 @@ async function executeToolCall(toolCall, message) {
   console.log("\n=== Tool Execution Started ===");
   console.log("Tool Name:", toolCall.function.name);
   console.log("Tool Arguments:", toolCall.function.arguments);
+  console.log("Message object available:", !!message);
+  console.log("Message has react method:", !!(message && message.react));
 
   try {
     const args = JSON.parse(toolCall.function.arguments);
 
-    if (toolCall.function.name === "getRecentMessages") {
-      console.log("Fetching recent messages...");
-      const fetchedMessages = await message.channel.messages.fetch({
-        limit: Math.min(args.limit || 50, 100),
-      });
-
-      console.log("Messages fetched:", fetchedMessages.size);
-
-      const processedMessages = Array.from(fetchedMessages.values())
-        .map((msg) => ({
-          content: msg.content || "",
-          author: msg.author?.username || "Unknown User",
-          timestamp: msg.createdTimestamp,
-          id: msg.id,
-        }))
-        .filter((msg) => msg.content.trim() !== ""); // Filter out empty messages
-
-      console.log("Messages processed:", processedMessages.length);
-      return processedMessages;
-    }
-
-    // Add reaction tool execution
     if (toolCall.function.name === "addReaction") {
       console.log("\n=== Adding Reaction ===");
-      console.log("Mood:", args.mood);
-
+      console.log("Parsed Arguments:", args);
+      console.log("Requested Mood:", args.mood);
+      
       if (!message?.guild) {
-        console.log("No guild available for reaction");
+        console.log("Error: No guild available for reaction");
         return { error: true, message: "No guild available" };
       }
 
       try {
-        // First try to find a custom emoji that matches the mood
+        // Log available custom emojis
+        console.log("Available Custom Emojis:", 
+          message.guild.emojis.cache.map(e => ({
+            name: e.name,
+            id: e.id,
+            identifier: e.toString()
+          }))
+        );
+
+        // Try custom emoji first
         const customEmoji = message.guild.emojis.cache.find(emoji => 
           emoji.name.toLowerCase().includes(args.mood.toLowerCase())
         );
 
         if (customEmoji) {
-          console.log("Found custom emoji:", customEmoji.toString());
-          // Can use any of these formats:
-          // customEmoji.id
-          // `<:${customEmoji.name}:${customEmoji.id}>`
-          // `${customEmoji.name}:${customEmoji.id}`
-          await message.react(customEmoji.id);
-          return {
-            success: true,
-            mood: args.mood,
-            emoji: customEmoji.toString(),
-            type: 'custom'
-          };
+          console.log("Found matching custom emoji:", {
+            name: customEmoji.name,
+            id: customEmoji.id,
+            identifier: customEmoji.toString()
+          });
+          
+          try {
+            await message.react(customEmoji.id);
+            console.log("Successfully added custom emoji reaction");
+            return {
+              success: true,
+              mood: args.mood,
+              emoji: customEmoji.toString(),
+              type: 'custom'
+            };
+          } catch (reactionError) {
+            console.error("Failed to add custom emoji:", reactionError);
+            throw reactionError; // Let it fall through to Unicode fallback
+          }
+        } else {
+          console.log("No matching custom emoji found, falling back to Unicode");
         }
 
-        // Fallback to Unicode emojis with expanded mapping
+        // Unicode emoji fallback with logging
         const moodMap = {
-          happy: ["😊", "😄", "🎉", "💖", "😸"],
-          excited: ["🔥", "🚀", "⚡", "✨", "🌟"],
-          thoughtful: ["🤔", "💭", "🧠", "🎯", "🔮"],
-          suspicious: ["👀", "🕵️", "🤨", "🧐", "🔍"],
-          chaotic: ["🌪️", "🎲", "🎭", "🃏", "🌀"],
-          sad: ["😢", "😭", "💔", "🥺", "😿"],
-          angry: ["😠", "😡", "💢", "🤬", "👿"],
-          confused: ["😕", "😵", "❓", "🤯", "💫"],
-          sarcastic: ["😏", "🙄", "😒", "💅", "🎭"],
+          happy: ["😊", "😄", "🎉", "💖"],
+          excited: ["🔥", "🚀", "⚡", "✨"],
+          thoughtful: ["🤔", "💭", "🧠", "🎯"],
+          suspicious: ["👀", "🕵️", "🤨", "🧐"],
+          chaotic: ["🌪️", "🎲", "🎭", "🃏"],
+          sad: ["😢", "😭", "💔", "🥺"],
+          angry: ["😠", "😡", "💢", "🤬"],
+          confused: ["😕", "😵", "❓", "🤯"],
           evil: ["😈", "👿", "🦹", "🕴️", "🎭"],
           robot: ["🤖", "⚙️", "🔧", "💻", "🎮"]
         };
 
-        // Get emoji array for mood or default to robot mood
+        console.log("Available moods:", Object.keys(moodMap));
         const moodEmojis = moodMap[args.mood.toLowerCase()] || moodMap.robot;
-        const randomEmoji = moodEmojis[Math.floor(Math.random() * moodEmojis.length)];
+        console.log("Selected mood emojis:", moodEmojis);
         
-        await message.react(randomEmoji);
-        return {
-          success: true,
-          mood: args.mood,
-          emoji: randomEmoji,
-          type: 'unicode'
-        };
+        const randomEmoji = moodEmojis[Math.floor(Math.random() * moodEmojis.length)];
+        console.log("Selected random emoji:", randomEmoji);
+        
+        try {
+          await message.react(randomEmoji);
+          console.log("Successfully added Unicode emoji reaction");
+          return {
+            success: true,
+            mood: args.mood,
+            emoji: randomEmoji,
+            type: 'unicode'
+          };
+        } catch (unicodeError) {
+          console.error("Failed to add Unicode emoji:", unicodeError);
+          throw unicodeError;
+        }
 
       } catch (error) {
         console.error("Reaction error:", error);
-        // Fallback to robot emoji
+        console.log("Attempting fallback to robot emoji...");
+        
         try {
           await message.react("🤖");
+          console.log("Successfully added fallback robot emoji");
           return {
             success: true,
             fallback: true,
@@ -988,6 +997,8 @@ async function executeToolCall(toolCall, message) {
       }
     }
 
+    // Handle other tools...
+    console.log("Tool not recognized:", toolCall.function.name);
     throw new Error(`Unknown tool: ${toolCall.function.name}`);
   } catch (error) {
     console.error("Tool execution error:", error);
@@ -995,8 +1006,6 @@ async function executeToolCall(toolCall, message) {
       error: true,
       message: error.message
     };
-  } finally {
-    console.log("=== Tool Execution Completed ===\n");
   }
 }
 
