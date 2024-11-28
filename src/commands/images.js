@@ -2,6 +2,43 @@ const openai = require('../services/openai');
 const { GalleryManager } = require('../utils/galleryUtils');
 const { searchGif } = require('../tools/searchGif');
 
+// Gallery navigation handler
+async function handleGalleryNavigation(reaction, user) {
+  const gallery = GalleryManager.getGallery(user.id);
+  if (!gallery) return;
+
+  const emoji = reaction.emoji.name;
+  switch (emoji) {
+    case '⬅️':
+      if (gallery.currentIndex > 0) {
+        gallery.currentIndex--;
+        await updateGalleryMessage(reaction.message, gallery);
+      }
+      break;
+    case '➡️':
+      if (gallery.currentIndex < gallery.images.length - 1) {
+        gallery.currentIndex++;
+        await updateGalleryMessage(reaction.message, gallery);
+      }
+      break;
+    case '❌':
+      await reaction.message.delete();
+      GalleryManager.deleteGallery(user.id);
+      break;
+  }
+}
+
+// Update gallery message with new image
+async function updateGalleryMessage(message, gallery) {
+  const currentImage = gallery.images[gallery.currentIndex];
+  await message.edit({
+    embeds: [{
+      title: `Image ${gallery.currentIndex + 1}/${gallery.images.length}`,
+      image: { url: currentImage.url }
+    }]
+  });
+}
+
 const images = {
   name: 'images',
   description: 'Generate or search for images',
@@ -56,7 +93,8 @@ const images = {
       console.error('Error in images command:', error);
       await message.reply('Sorry, I encountered an error while processing your image request.');
     }
-  }
+  },
+  handleGalleryNavigation // Export the navigation handler
 };
 
 module.exports = images; 
