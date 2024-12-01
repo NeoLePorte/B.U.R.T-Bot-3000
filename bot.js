@@ -1135,7 +1135,7 @@ client.on("interactionCreate", async (interaction) => {
   if (!interaction.isChatInputCommand()) return;
 
   if (interaction.commandName === "images") {
-    await interaction.deferReply();
+    await interaction.deferReply({ ephemeral: true });
     
     const amount = interaction.options.getInteger("amount") || 100;
     const initialMessages = await interaction.channel.messages.fetch({ limit: 100 });
@@ -1143,7 +1143,7 @@ client.on("interactionCreate", async (interaction) => {
     const initialImages = processMessagesForImages(initialMessages);
     
     if (initialImages.length === 0) {
-      await interaction.editReply("No images found in recent messages!");
+      await interaction.editReply({ content: "No images found in recent messages!", ephemeral: true });
       return;
     }
 
@@ -1153,7 +1153,7 @@ client.on("interactionCreate", async (interaction) => {
       loading: initialImages.length < amount
     };
 
-    await interaction.editReply(createGalleryMessage(galleryData));
+    await interaction.editReply({ ...createGalleryMessage(galleryData), ephemeral: true });
     
     // Start background fetch if we need more images
     if (galleryData.loading) {
