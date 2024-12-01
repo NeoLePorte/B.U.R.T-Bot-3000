@@ -1153,11 +1153,58 @@ client.on("interactionCreate", async (interaction) => {
       loading: initialImages.length < amount
     };
 
-    await interaction.editReply({ ...createGalleryMessage(galleryData), ephemeral: true });
+    const reply = await interaction.editReply({ 
+      ...createGalleryMessage(galleryData), 
+      ephemeral: true 
+    });
+    
+    // Store the gallery data using the message ID as the key
+    activeGalleries.set(reply.id, galleryData);
     
     // Start background fetch if we need more images
     if (galleryData.loading) {
       fetchRemainingImages(interaction, galleryData).catch(console.error);
     }
+
+    // Set up a timeout to clean up the gallery data
+    setTimeout(() => {
+      activeGalleries.delete(reply.id);
+    }, GALLERY_TIMEOUT);
+  }
+});
+
+// Add this after your command handler
+client.on("interactionCreate", async (interaction) => {
+  if (!interaction.isButton()) return;
+
+  // Get the gallery data for this channel
+  const galleryData = activeGalleries.get(interaction.message.id);
+  if (!galleryData) return;
+
+  try {
+    switch (interaction.customId) {
+      case "prev":
+        if (galleryData.currentIndex > 0) {
+          galleryData.currentIndex--;
+        }
+        break;
+      case "next":
+        if (galleryData.currentIndex < galleryData.images.length - 1) {
+          galleryData.currentIndex++;
+        }
+        break;
+      case "close":
+        await interaction.message.delete();
+        activeGalleries.delete(interaction.message.id);
+        return;
+    }
+
+    await interaction.update(createGalleryMessage(galleryData));
+  } catch (error) {
+    console.error("Error handling gallery button:", error);
+    await interaction.reply({ 
+      content: "There was an error updating the gallery.", 
+      ephemeral: true 
+    });
   }
 });
