@@ -352,6 +352,8 @@ function processMessagesForImages(messages) {
       });
     }
   }
+
+  console.log(`Processed ${messages.size} messages, found ${images.length} images`);
   return images;
 }
 
@@ -520,7 +522,7 @@ async function getEmojiSuggestion(content, availableEmojis) {
       "🔥",
       "🎉",
       "😊",
-      "🤔",
+      "",
       "",
       "🧪",
       "🤖",
@@ -1135,51 +1137,73 @@ client.on("interactionCreate", async (interaction) => {
   if (!interaction.isChatInputCommand()) return;
 
   if (interaction.commandName === "images") {
-    await interaction.deferReply({ ephemeral: true });
-    
-    const amount = interaction.options.getInteger("amount") || 100;
-    const initialMessages = await interaction.channel.messages.fetch({ limit: 100 });
-    
-    const initialImages = processMessagesForImages(initialMessages);
-    
-    if (initialImages.length === 0) {
-      await interaction.editReply({ content: "No images found in recent messages!", ephemeral: true });
-      return;
+    try {
+      await interaction.deferReply({ ephemeral: true });
+      
+      const amount = interaction.options.getInteger("amount") || 100;
+      console.log("Fetching initial messages...");
+      const initialMessages = await interaction.channel.messages.fetch({ limit: 100 });
+      
+      console.log(`Processing ${initialMessages.size} messages for images...`);
+      const initialImages = processMessagesForImages(initialMessages);
+      console.log(`Found ${initialImages.length} initial images`);
+      
+      if (initialImages.length === 0) {
+        await interaction.editReply({ 
+          content: "No images found in recent messages!", 
+          ephemeral: true 
+        });
+        return;
+      }
+
+      const galleryData = {
+        images: initialImages,
+        currentIndex: 0,
+        loading: initialImages.length < amount
+      };
+
+      const reply = await interaction.editReply({ 
+        ...createGalleryMessage(galleryData), 
+        ephemeral: true 
+      });
+      
+      // Store the gallery data
+      activeGalleries.set(reply.id, galleryData);
+      
+      // Start background fetch if needed
+      if (galleryData.loading) {
+        console.log("Starting background fetch for more images...");
+        fetchRemainingImages(interaction, galleryData).catch(console.error);
+      }
+
+      // Set up cleanup
+      setTimeout(() => {
+        activeGalleries.delete(reply.id);
+      }, GALLERY_TIMEOUT);
+
+    } catch (error) {
+      console.error("Error in images command:", error);
+      await interaction.editReply({ 
+        content: "An error occurred while creating the image gallery.", 
+        ephemeral: true 
+      });
     }
-
-    const galleryData = {
-      images: initialImages,
-      currentIndex: 0,
-      loading: initialImages.length < amount
-    };
-
-    const reply = await interaction.editReply({ 
-      ...createGalleryMessage(galleryData), 
-      ephemeral: true 
-    });
-    
-    // Store the gallery data using the message ID as the key
-    activeGalleries.set(reply.id, galleryData);
-    
-    // Start background fetch if we need more images
-    if (galleryData.loading) {
-      fetchRemainingImages(interaction, galleryData).catch(console.error);
-    }
-
-    // Set up a timeout to clean up the gallery data
-    setTimeout(() => {
-      activeGalleries.delete(reply.id);
-    }, GALLERY_TIMEOUT);
   }
 });
 
-// Add this after your command handler
+// Update the button interaction handler
 client.on("interactionCreate", async (interaction) => {
   if (!interaction.isButton()) return;
 
-  // Get the gallery data for this channel
+  // Get the gallery data for this message
   const galleryData = activeGalleries.get(interaction.message.id);
-  if (!galleryData) return;
+  if (!galleryData) {
+    await interaction.reply({ 
+      content: "This gallery has expired. Please create a new one.", 
+      ephemeral: true 
+    });
+    return;
+  }
 
   try {
     switch (interaction.customId) {
@@ -1194,7 +1218,12 @@ client.on("interactionCreate", async (interaction) => {
         }
         break;
       case "close":
-        await interaction.message.delete();
+        // For ephemeral messages, we update with a "closed" message instead of deleting
+        await interaction.update({ 
+          content: "Gallery closed.", 
+          embeds: [], 
+          components: [] 
+        });
         activeGalleries.delete(interaction.message.id);
         return;
     }
