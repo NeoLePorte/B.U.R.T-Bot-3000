@@ -517,8 +517,8 @@ async function getEmojiSuggestion(content, availableEmojis) {
   try {
     // Create a list of valid emoji identifiers
     const unicodeEmojis = [
-      "👍",
-      "❤️",
+      "��",
+      "❤���",
       "🔥",
       "🎉",
       "😊",
@@ -623,6 +623,68 @@ client.on("interactionCreate", async (interaction) => {
           ephemeral: true,
         });
       }
+    }
+  }
+
+  if (command === "tweets") {
+    try {
+      await interaction.deferReply({ ephemeral: true });
+      
+      const amount = interaction.options.getInteger("amount") || 100;
+      console.log("Fetching messages for tweet links...");
+      
+      // Fetch messages
+      const messages = await interaction.channel.messages.fetch({ limit: amount });
+      
+      // Find Twitter/X links
+      const tweetRegex = /(?:https?:\/\/)?(?:www\.)?(?:twitter\.com|x\.com)\/[a-zA-Z0-9_]+\/status\/[0-9]+/g;
+      const tweets = [];
+      
+      messages.forEach(msg => {
+        const matches = msg.content.match(tweetRegex);
+        if (matches) {
+          matches.forEach(url => {
+            tweets.push({
+              url: url,
+              author: msg.author.username,
+              timestamp: msg.createdTimestamp,
+              messageLink: msg.url
+            });
+          });
+        }
+      });
+
+      if (tweets.length === 0) {
+        await interaction.editReply({
+          content: "No Twitter/X links found in recent messages!",
+          ephemeral: true
+        });
+        return;
+      }
+
+      // Create embed for tweets
+      const embed = new EmbedBuilder()
+        .setTitle(`Recent Tweets/X Posts (Found ${tweets.length})`)
+        .setColor(0x1DA1F2)
+        .setDescription(
+          tweets.map((tweet, index) => 
+            `${index + 1}. [Tweet](${tweet.url}) - Posted by ${tweet.author} ([Jump to message](${tweet.messageLink}))`
+          ).join('\n\n')
+        )
+        .setFooter({ text: `Found ${tweets.length} tweets in the last ${amount} messages` })
+        .setTimestamp();
+
+      await interaction.editReply({
+        embeds: [embed],
+        ephemeral: true
+      });
+
+    } catch (error) {
+      console.error("Error in tweets command:", error);
+      await interaction.editReply({
+        content: "An error occurred while fetching tweets.",
+        ephemeral: true
+      });
     }
   }
 });
